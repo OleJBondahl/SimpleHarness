@@ -43,11 +43,11 @@ from simpleharness.approver_core import (
     fake_verdict_from_input,
     parse_verdict,
 )
-from simpleharness.core import (
+from simpleharness.core import toolbox_root
+from simpleharness.shell import (
     load_config,
     load_role,
     persist_approver_allow,
-    toolbox_root,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
