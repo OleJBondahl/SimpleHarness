@@ -38,6 +38,7 @@ from simpleharness_core import (
     load_role,
     read_frontmatter_file,
     toolbox_root,
+    write_approver_allowlist,
 )
 from simpleharness_core import (
     Permissions as Permissions,  # re-export for downstream scripts
@@ -471,37 +472,35 @@ def _build_allowlist(role: Role, config: Config) -> str:
     return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
 
 
-def _write_mcp_config(
-    task_dir: Path,
-    stream_log_path: Path,
-    worksite: Path,
-    approver_model: str,
-    role_name: str,
-    task_slug: str,
-) -> Path:
-    """Write a transient MCP config JSON registering the approver stdio server.
+def _write_approver_settings(task_dir: Path) -> Path:
+    """Write .approver-settings.json registering the PreToolUse hook.
 
-    Lifecycle mirrors .session_prompt.md: overwritten each session, left on
-    disk for post-hoc debugging. Returns the path to the written file.
+    The hook is scoped to the Bash matcher only — other tools flow
+    through the normal --allowedTools check. Lifecycle mirrors
+    .session_prompt.md: overwritten each session, left on disk for
+    post-hoc debugging. Returns the path to the written file.
     """
-    path = task_dir / ".mcp-config.json"
-    payload = {
-        "mcpServers": {
-            "simpleharness_approver": {
-                "command": "uv",
-                "args": ["run", "python", "-m", "simpleharness_approver_mcp"],
-                "env": {
-                    "SIMPLEHARNESS_STREAM_LOG": str(stream_log_path),
-                    "SIMPLEHARNESS_WORKSITE": str(worksite),
-                    "SIMPLEHARNESS_APPROVER_MODEL": approver_model,
-                    "SIMPLEHARNESS_ROLE": role_name,
-                    "SIMPLEHARNESS_TASK_SLUG": task_slug,
-                },
-            }
+    hook_script = (toolbox_root() / "simpleharness_approver_hook.sh").as_posix()
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"bash {hook_script}",
+                        }
+                    ],
+                }
+            ]
         }
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return path
+    out_path = task_dir / ".approver-settings.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    return out_path
 
 
 def build_claude_cmd(
@@ -517,7 +516,9 @@ def build_claude_cmd(
     """Assemble the full `claude` command line for a single session.
 
     `task` and `jsonl_log` are required when `config.permissions.mode` is
-    `approver` — they feed the MCP config writer.
+    `approver` — they locate the task dir for the settings + allowlist
+    files, and the jsonl log is re-exported via env for the slow-path
+    hook to tail.
     """
     cmd: list[str] = [
         "claude",
@@ -546,20 +547,13 @@ def build_claude_cmd(
             raise ValueError("approver mode requires task and jsonl_log arguments")
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
-        mcp_config_path = _write_mcp_config(
-            task_dir=task.folder,
-            stream_log_path=jsonl_log,
-            worksite=Path(task.state.worksite),
-            approver_model=config.permissions.approver_model,
-            role_name=role.name,
-            task_slug=task.slug,
-        )
-        cmd += [
-            "--permission-prompt-tool",
-            "mcp__simpleharness_approver__review",
-            "--mcp-config",
-            str(mcp_config_path),
-        ]
+        # Seed the fast-path allowlist file so the bash PreToolUse hook
+        # has the merged default + worksite patterns on the first call,
+        # before the Python slow path has a chance to refresh it.
+        bash_patterns = list(DEFAULT_BASH_ALLOW) + list(config.permissions.extra_bash_allow)
+        write_approver_allowlist(task.folder, bash_patterns)
+        settings_path = _write_approver_settings(task.folder)
+        cmd += ["--settings", str(settings_path)]
     else:
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
@@ -1340,10 +1334,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             )
             ok = False
     elif mode == "approver":
-        say("permission mode: APPROVER (acceptEdits + live MCP review)", style="green")
+        say(
+            "permission mode: APPROVER (acceptEdits + PreToolUse hook review)",
+            style="green",
+        )
         approver_ok = True
 
-        # claude supports --permission-prompt-tool?
+        # claude supports --settings?
         try:
             help_proc = subprocess.run(
                 ["claude", "--help"],
@@ -1352,17 +1349,44 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 timeout=10,
             )
             help_text = (help_proc.stdout or "") + (help_proc.stderr or "")
-            if "permission-prompt-tool" not in help_text:
+            if "--settings" not in help_text:
                 err(
-                    "claude CLI does not advertise --permission-prompt-tool. "
-                    "Upgrade Claude Code CLI to a version that supports MCP permission prompts."
+                    "Claude Code CLI does not support --settings — "
+                    "upgrade the CLI to enable approver mode."
                 )
                 approver_ok = False
+            else:
+                say("claude CLI supports --settings", style="green")
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             err(f"could not run `claude --help` to check approver support: {e}")
             approver_ok = False
 
-        # uv on PATH (needed for `uv run python -m simpleharness_approver_mcp`)
+        # bash on PATH (the fast-path PreToolUse hook is a .sh script)
+        try:
+            bash_proc = subprocess.run(
+                ["bash", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                stdin=subprocess.DEVNULL,
+            )
+            if bash_proc.returncode == 0:
+                first_line = (bash_proc.stdout or "").splitlines()[0:1]
+                say(
+                    f"bash found: {first_line[0] if first_line else 'ok'}",
+                    style="green",
+                )
+            else:
+                err(f"bash --version exited {bash_proc.returncode}")
+                approver_ok = False
+        except FileNotFoundError:
+            err("bash not found on PATH — required to run the approver fast-path hook")
+            approver_ok = False
+        except subprocess.TimeoutExpired:
+            err("bash --version timed out")
+            approver_ok = False
+
+        # uv on PATH (belt-and-braces for the slow-path Python hook)
         try:
             uv_proc = subprocess.run(
                 ["uv", "--version"], capture_output=True, text=True, timeout=10
@@ -1373,11 +1397,28 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 err(f"uv --version exited {uv_proc.returncode}: {uv_proc.stderr.strip()}")
                 approver_ok = False
         except FileNotFoundError:
-            err("uv not found on PATH — required to spawn the approver MCP server")
+            err("uv not found on PATH")
             approver_ok = False
         except subprocess.TimeoutExpired:
             err("uv --version timed out")
             approver_ok = False
+
+        # bash fast-path script present in the toolbox?
+        hook_sh = toolbox_root() / "simpleharness_approver_hook.sh"
+        if hook_sh.is_file():
+            say(f"approver hook script: {hook_sh}", style="green")
+        else:
+            err(f"approver hook script missing: {hook_sh}")
+            approver_ok = False
+
+        # Python slow-path module importable?
+        import importlib.util
+
+        if importlib.util.find_spec("simpleharness_approver_hook") is None:
+            err("simpleharness_approver_hook module not importable")
+            approver_ok = False
+        else:
+            say("simpleharness_approver_hook: importable", style="green")
 
         # approver role file loadable?
         try:
@@ -1386,15 +1427,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         except (FileNotFoundError, ValueError) as e:
             err(f"roles/approver.md: {e}")
             approver_ok = False
-
-        # MCP server module importable?
-        import importlib.util
-
-        if importlib.util.find_spec("simpleharness_approver_mcp") is None:
-            err("simpleharness_approver_mcp module not importable")
-            approver_ok = False
-        else:
-            say("simpleharness_approver_mcp: importable", style="green")
 
         if approver_ok:
             say("✓ approver mode ready", style="green")
