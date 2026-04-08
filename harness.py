@@ -487,14 +487,67 @@ def consume_correction(task: Task) -> str | None:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+def _build_allowlist(role: Role, config: Config) -> str:
+    """Construct the --allowedTools value shared by safe and approver modes."""
+    tools = DEFAULT_TOOLS_ALLOW + role.allowed_tools + config.permissions.extra_tools_allow
+    bash_patterns = DEFAULT_BASH_ALLOW + config.permissions.extra_bash_allow
+    seen: set[str] = set()
+    dedup_tools: list[str] = []
+    for t in tools:
+        if t not in seen:
+            seen.add(t)
+            dedup_tools.append(t)
+    return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
+
+
+def _write_mcp_config(
+    task_dir: Path,
+    stream_log_path: Path,
+    worksite: Path,
+    approver_model: str,
+    role_name: str,
+    task_slug: str,
+) -> Path:
+    """Write a transient MCP config JSON registering the approver stdio server.
+
+    Lifecycle mirrors .session_prompt.md: overwritten each session, left on
+    disk for post-hoc debugging. Returns the path to the written file.
+    """
+    path = task_dir / ".mcp-config.json"
+    payload = {
+        "mcpServers": {
+            "simpleharness_approver": {
+                "command": "uv",
+                "args": ["run", "python", "-m", "simpleharness_approver_mcp"],
+                "env": {
+                    "SIMPLEHARNESS_STREAM_LOG": str(stream_log_path),
+                    "SIMPLEHARNESS_WORKSITE": str(worksite),
+                    "SIMPLEHARNESS_APPROVER_MODEL": approver_model,
+                    "SIMPLEHARNESS_ROLE": role_name,
+                    "SIMPLEHARNESS_TASK_SLUG": task_slug,
+                },
+            }
+        }
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
 def build_claude_cmd(
     prompt_file: Path,
     role: Role,
     toolbox: Path,
     session_id: str,
     config: Config,
+    *,
+    task: Task | None = None,
+    jsonl_log: Path | None = None,
 ) -> list[str]:
-    """Assemble the full `claude` command line for a single session."""
+    """Assemble the full `claude` command line for a single session.
+
+    `task` and `jsonl_log` are required when `config.permissions.mode` is
+    `approver` — they feed the MCP config writer.
+    """
     cmd: list[str] = [
         "claude",
         "-p",
@@ -518,20 +571,27 @@ def build_claude_cmd(
     if mode == "dangerous":
         cmd += ["--permission-mode", "bypassPermissions"]
     elif mode == "approver":
-        raise NotImplementedError("approver mode wiring lands in Task 4")
+        if task is None or jsonl_log is None:
+            raise ValueError("approver mode requires task and jsonl_log arguments")
+        cmd += ["--permission-mode", "acceptEdits"]
+        cmd += ["--allowedTools", _build_allowlist(role, config)]
+        mcp_config_path = _write_mcp_config(
+            task_dir=task.folder,
+            stream_log_path=jsonl_log,
+            worksite=Path(task.state.worksite),
+            approver_model=config.permissions.approver_model,
+            role_name=role.name,
+            task_slug=task.slug,
+        )
+        cmd += [
+            "--permission-prompt-tool",
+            "mcp__simpleharness_approver__review",
+            "--mcp-config",
+            str(mcp_config_path),
+        ]
     else:
         cmd += ["--permission-mode", "acceptEdits"]
-        tools = DEFAULT_TOOLS_ALLOW + role.allowed_tools + config.permissions.extra_tools_allow
-        bash_patterns = DEFAULT_BASH_ALLOW + config.permissions.extra_bash_allow
-        # dedupe while preserving order
-        seen: set[str] = set()
-        dedup_tools: list[str] = []
-        for t in tools:
-            if t not in seen:
-                seen.add(t)
-                dedup_tools.append(t)
-        allowlist = ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
-        cmd += ["--allowedTools", allowlist]
+        cmd += ["--allowedTools", _build_allowlist(role, config)]
 
     return cmd
 
@@ -543,7 +603,16 @@ def _popen_kwargs_windows() -> dict[str, Any]:
     return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
 
 
-def spawn_claude(cmd: list[str], cwd: Path) -> subprocess.Popen[str]:
+def spawn_claude(
+    cmd: list[str],
+    cwd: Path,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.Popen[str]:
+    env: dict[str, str] | None = None
+    if extra_env:
+        env = os.environ.copy()
+        env.update(extra_env)
     return subprocess.Popen(
         cmd,
         cwd=str(cwd),
@@ -553,6 +622,7 @@ def spawn_claude(cmd: list[str], cwd: Path) -> subprocess.Popen[str]:
         encoding="utf-8",
         errors="replace",
         bufsize=1,  # line-buffered
+        env=env,
         **_popen_kwargs_windows(),
     )
 
@@ -818,16 +888,25 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     prompt = build_session_prompt(task, role, workflow, toolbox, correction)
     prompt_file = write_session_prompt_file(task, prompt)
 
-    # 3. build command
-    session_id = str(uuid.uuid4())
-    cmd = build_claude_cmd(prompt_file, role, toolbox, session_id, config)
-
-    # 4. log paths
+    # 3. log paths (built before the command so approver mode can point the
+    # MCP server at the jsonl log it needs to tail)
     log_root = worksite_sh_dir(Path(task.state.worksite)) / "logs" / task.slug
     idx = task.state.total_sessions  # zero-padded to 2
     stem = f"{idx:02d}-{role.name}"
     jsonl_log = log_root / f"{stem}.jsonl"
     plain_log = log_root / f"{stem}.log"
+
+    # 4. build command
+    session_id = str(uuid.uuid4())
+    cmd = build_claude_cmd(
+        prompt_file,
+        role,
+        toolbox,
+        session_id,
+        config,
+        task=task,
+        jsonl_log=jsonl_log,
+    )
 
     # 5. banner
     console.rule(f"[cyan]session {idx + 1}  [bold]{role.name}[/]  task={task.slug}")
@@ -837,8 +916,21 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     if correction:
         say("CORRECTION.md was consumed and injected into this session's prompt.", style="yellow")
 
-    # 6. spawn + stream
-    proc = spawn_claude(cmd, Path(task.state.worksite))
+    # 6. env exports (approver mode only — mirror the vars Claude Code will
+    # pass to the MCP server, so anything running in-process downstream sees
+    # the same values)
+    extra_env: dict[str, str] | None = None
+    if config.permissions.mode == "approver":
+        extra_env = {
+            "SIMPLEHARNESS_STREAM_LOG": str(jsonl_log),
+            "SIMPLEHARNESS_WORKSITE": str(Path(task.state.worksite)),
+            "SIMPLEHARNESS_APPROVER_MODEL": config.permissions.approver_model,
+            "SIMPLEHARNESS_ROLE": role.name,
+            "SIMPLEHARNESS_TASK_SLUG": task.slug,
+        }
+
+    # 7. spawn + stream
+    proc = spawn_claude(cmd, Path(task.state.worksite), extra_env=extra_env)
     interrupted = False
     result_session_id: str | None = None
     result_text: str | None = None
@@ -1277,10 +1369,66 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             )
             ok = False
     elif mode == "approver":
-        say(
-            "permission mode: APPROVER (wiring lands in Task 4 — not runnable yet)",
-            style="yellow",
-        )
+        say("permission mode: APPROVER (acceptEdits + live MCP review)", style="green")
+        approver_ok = True
+
+        # claude supports --permission-prompt-tool?
+        try:
+            help_proc = subprocess.run(
+                ["claude", "--help"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            help_text = (help_proc.stdout or "") + (help_proc.stderr or "")
+            if "permission-prompt-tool" not in help_text:
+                err(
+                    "claude CLI does not advertise --permission-prompt-tool. "
+                    "Upgrade Claude Code CLI to a version that supports MCP permission prompts."
+                )
+                approver_ok = False
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            err(f"could not run `claude --help` to check approver support: {e}")
+            approver_ok = False
+
+        # uv on PATH (needed for `uv run python -m simpleharness_approver_mcp`)
+        try:
+            uv_proc = subprocess.run(
+                ["uv", "--version"], capture_output=True, text=True, timeout=10
+            )
+            if uv_proc.returncode == 0:
+                say(f"uv found: {uv_proc.stdout.strip()}", style="green")
+            else:
+                err(f"uv --version exited {uv_proc.returncode}: {uv_proc.stderr.strip()}")
+                approver_ok = False
+        except FileNotFoundError:
+            err("uv not found on PATH — required to spawn the approver MCP server")
+            approver_ok = False
+        except subprocess.TimeoutExpired:
+            err("uv --version timed out")
+            approver_ok = False
+
+        # approver role file loadable?
+        try:
+            load_role("approver")
+            say("roles/approver.md: loadable", style="green")
+        except (FileNotFoundError, ValueError) as e:
+            err(f"roles/approver.md: {e}")
+            approver_ok = False
+
+        # MCP server module importable?
+        import importlib.util
+
+        if importlib.util.find_spec("simpleharness_approver_mcp") is None:
+            err("simpleharness_approver_mcp module not importable")
+            approver_ok = False
+        else:
+            say("simpleharness_approver_mcp: importable", style="green")
+
+        if approver_ok:
+            say("✓ approver mode ready", style="green")
+        else:
+            ok = False
     else:
         say("permission mode: SAFE (acceptEdits + curated allowlist)", style="green")
 
