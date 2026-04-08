@@ -117,7 +117,7 @@ class Config:
     max_same_role_repeats: int = 3
     no_progress_tick_threshold: int = 5
     max_turns_default: int = 60
-    include_partial_messages: bool = True
+    include_partial_messages: bool = False
     permissions: Permissions = field(default_factory=Permissions)
 
 
@@ -368,7 +368,9 @@ def write_state(path: Path, state: State) -> None:
         "consecutive_same_role": state.consecutive_same_role,
     }
     ordered = {k: data[k] for k in _STATE_FIELD_ORDER if k in data}
-    yaml_body = yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    yaml_body = yaml.safe_dump(
+        ordered, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
     path.write_text(f"---\n{yaml_body}---\n", encoding="utf-8")
 
 
@@ -507,8 +509,9 @@ def build_session_prompt(
     if correction_text:
         correction_block = (
             "## USER INTERVENTION — READ THIS BEFORE ANYTHING ELSE\n\n"
-            "The user interrupted the previous attempt and typed the following\n"
-            "correction. Follow it before doing anything else.\n\n"
+            "The user pressed Ctrl+C mid-session and typed the text below.\n"
+            "Their instruction supersedes everything else in TASK.md and\n"
+            "prior phase files for this session only. Follow it first.\n\n"
             "-----------------------------------------------------------------\n"
             f"{correction_text.strip()}\n"
             "-----------------------------------------------------------------\n\n"
@@ -695,9 +698,37 @@ class SessionResult:
     exit_code: int | None
 
 
+def _format_tool_call(tname: str, tinput: dict[str, Any]) -> str:
+    """Return a short human-readable summary of a tool_use block's input.
+
+    Per-tool formatting so the stream reads like a log of actions instead of
+    a JSON dump.
+    """
+    if tname == "Bash":
+        cmd = str(tinput.get("command", "")).strip()
+        return f"$ {cmd}"
+    if tname == "Read":
+        return str(tinput.get("file_path", ""))
+    if tname in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        return str(tinput.get("file_path", ""))
+    if tname in ("Glob", "Grep"):
+        pattern = str(tinput.get("pattern", ""))
+        path = str(tinput.get("path", ""))
+        return f"{pattern}  [{path}]" if path else pattern
+    if tname == "Agent":
+        model = str(tinput.get("model", "?"))
+        desc = str(tinput.get("description", "") or tinput.get("prompt", ""))
+        return f"[{model}] {desc[:80]}"
+    return json.dumps(tinput, ensure_ascii=False)[:200]
+
+
 def _pretty_event(event: dict[str, Any]) -> None:
     """Render a single stream-json event to the terminal using rich."""
     etype = event.get("type", "")
+    # Partial-message deltas are pure noise at the terminal level. They still
+    # land in the .jsonl log for debug; just don't spam the user here.
+    if etype == "stream_event":
+        return
     if etype == "system":
         sub = event.get("subtype", "")
         if sub == "init":
@@ -719,10 +750,11 @@ def _pretty_event(event: dict[str, Any]) -> None:
                     console.print(text, markup=False, highlight=False)
             elif btype == "tool_use":
                 tname = block.get("name", "?")
-                tinput = block.get("input", {})
-                # keep tool calls compact
-                brief = json.dumps(tinput, ensure_ascii=False)[:200]
-                console.print(rf"[magenta]  \[tool][/] {tname}  [dim]{brief}[/]", markup=True)
+                tinput = block.get("input", {}) or {}
+                pretty = _format_tool_call(tname, tinput)
+                from rich.markup import escape as _rich_escape
+
+                console.print(rf"[magenta]→ {tname}[/] [dim]{_rich_escape(pretty)}[/]")
             elif btype == "thinking":
                 console.print(r"[dim italic]  \[thinking\.\.\.][/]")
         return
@@ -731,13 +763,20 @@ def _pretty_event(event: dict[str, Any]) -> None:
         for block in msg.get("content", []) or []:
             if block.get("type") == "tool_result":
                 content = block.get("content", "")
+                is_error = bool(block.get("is_error"))
                 if isinstance(content, list):
-                    content = " ".join(
-                        c.get("text", "") for c in content if isinstance(c, dict)
-                    )
-                summary = str(content)[:300].replace("\n", " ⏎ ")
+                    content = "\n".join(c.get("text", "") for c in content if isinstance(c, dict))
+                text = str(content)
                 from rich.markup import escape as _rich_escape
-                console.print(rf"[green]  \[result][/] [dim]{_rich_escape(summary)}[/]")
+
+                if is_error:
+                    preview = text[:600]
+                    suffix = f" [dim](+{len(text) - 600} more)[/]" if len(text) > 600 else ""
+                    console.print(rf"[red]  ✗ error[/] [dim]{_rich_escape(preview)}[/]{suffix}")
+                else:
+                    preview = text[:800]
+                    suffix = f" [dim](+{len(text) - 800} more)[/]" if len(text) > 800 else ""
+                    console.print(rf"[green]  ← result[/] [dim]{_rich_escape(preview)}[/]{suffix}")
         return
     if etype == "result":
         status = "ok" if not event.get("is_error") else "ERROR"
@@ -788,6 +827,7 @@ def stream_and_log(
                 pf.write(line + "\n")
                 pf.flush()
                 from rich.markup import escape as _rich_escape
+
                 console.print(rf"[dim red]  \[non-json][/] {_rich_escape(line[:200])}")
                 continue
             # capture identifiers
@@ -797,11 +837,29 @@ def stream_and_log(
                 elif event.get("type") == "result":
                     session_id = event.get("session_id") or session_id
                     result_text = event.get("result")
-            # plain-text mirror is brief
-            if isinstance(event, dict) and event.get("type") == "assistant":
-                for block in event.get("message", {}).get("content", []) or []:
-                    if block.get("type") == "text":
-                        pf.write(block.get("text", "") + "\n")
+            # plain-text mirror: assistant text + tool calls + tool results,
+            # so the .log reads like a human-readable session shadow.
+            if isinstance(event, dict):
+                etype = event.get("type")
+                if etype == "assistant":
+                    for block in event.get("message", {}).get("content", []) or []:
+                        btype = block.get("type")
+                        if btype == "text":
+                            pf.write(block.get("text", "") + "\n")
+                        elif btype == "tool_use":
+                            tname = block.get("name", "?")
+                            tinput = block.get("input", {}) or {}
+                            pf.write(f"→ {tname} {_format_tool_call(tname, tinput)}\n")
+                elif etype == "user":
+                    for block in event.get("message", {}).get("content", []) or []:
+                        if block.get("type") == "tool_result":
+                            content = block.get("content", "")
+                            if isinstance(content, list):
+                                content = "\n".join(
+                                    c.get("text", "") for c in content if isinstance(c, dict)
+                                )
+                            marker = "✗" if block.get("is_error") else "←"
+                            pf.write(f"  {marker} {str(content)[:800]}\n")
             pf.flush()
             _pretty_event(event if isinstance(event, dict) else {"type": "unknown"})
     return session_id, result_text
@@ -881,8 +939,10 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     plain_log = log_root / f"{stem}.log"
 
     # 5. banner
-    console.rule(f"[cyan]session {idx+1}  [bold]{role.name}[/]  task={task.slug}")
-    say(f"model={config.model}  session_id={session_id[:8]}  max_turns={role.max_turns or config.max_turns_default}")
+    console.rule(f"[cyan]session {idx + 1}  [bold]{role.name}[/]  task={task.slug}")
+    say(
+        f"model={config.model}  session_id={session_id[:8]}  max_turns={role.max_turns or config.max_turns_default}"
+    )
     if correction:
         say("CORRECTION.md was consumed and injected into this session's prompt.", style="yellow")
 
@@ -992,13 +1052,47 @@ def tick_once(worksite: Path, config: Config) -> bool:
         return False
 
     # decide next role
-    next_role_name = resolve_next_role(task, workflow)
-    if next_role_name is None:
-        say(f"task {task.slug}: past final phase and not marked done — blocking", style="yellow")
-        task.state.status = "blocked"
-        task.state.blocked_reason = "past final phase without status=done"
-        write_state(task.state_path, task.state)
-        return False
+    #
+    # Two special cases override the normal workflow-advance logic:
+    #
+    # 1. A CORRECTION.md on disk means the user is actively steering. Re-run
+    #    whoever last ran (or phase[0] if nobody has) so the correction is
+    #    consumed on this tick, regardless of whether workflow-advance would
+    #    otherwise say "past final phase".
+    #
+    # 2. When no correction is present but resolve_next_role returns None
+    #    (past the final phase, status still active), loop back to the last
+    #    role instead of hard-blocking. The session_cap, max_same_role_repeats,
+    #    and no_progress_tick_threshold guards are the real safety nets for
+    #    genuinely stuck tasks.
+    correction_pending = (task.folder / "CORRECTION.md").exists()
+    if correction_pending:
+        next_role_name = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+        if next_role_name is None:
+            err(f"task {task.slug}: correction pending but no role to run")
+            task.state.status = "blocked"
+            task.state.blocked_reason = "correction pending but workflow has no phases"
+            write_state(task.state_path, task.state)
+            return False
+        say(
+            f"task {task.slug}: CORRECTION.md present — re-running {next_role_name}",
+            style="yellow",
+        )
+    else:
+        next_role_name = resolve_next_role(task, workflow)
+        if next_role_name is None:
+            fallback = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+            if fallback is None:
+                err(f"task {task.slug}: no role to run and no phases in workflow")
+                task.state.status = "blocked"
+                task.state.blocked_reason = "workflow has no phases"
+                write_state(task.state_path, task.state)
+                return False
+            next_role_name = fallback
+            say(
+                f"task {task.slug}: past final phase, looping back to {next_role_name}",
+                style="yellow",
+            )
 
     try:
         role = load_role(next_role_name)
@@ -1040,7 +1134,9 @@ def tick_once(worksite: Path, config: Config) -> bool:
             post_state.no_progress_ticks = 0
             write_state(task.state_path, post_state)
 
-    say(f"task {task.slug}: session complete  (status={post_state.status}, next_role={post_state.next_role or 'auto'})")
+    say(
+        f"task {task.slug}: session complete  (status={post_state.status}, next_role={post_state.next_role or 'auto'})"
+    )
     return True
 
 
@@ -1144,7 +1240,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
         if args.once:
             tick_once(worksite, config)
             return 0
-        say(f"starting watch loop (idle sleep = {config.idle_sleep_seconds}s). Ctrl+C to interrupt.")
+        say(
+            f"starting watch loop (idle sleep = {config.idle_sleep_seconds}s). Ctrl+C to interrupt."
+        )
         while True:
             did_work = tick_once(worksite, config)
             if not did_work:
@@ -1198,6 +1296,35 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_unblock(args: argparse.Namespace) -> int:
+    """Reset a blocked task back to active so `watch` picks it up again.
+
+    Matches on exact slug or unique substring so users don't have to type the
+    full `NNN-long-slug` form.
+    """
+    worksite = worksite_root(args)
+    tasks = discover_tasks(worksite)
+    matches = [t for t in tasks if t.slug == args.slug or args.slug in t.slug]
+    if not matches:
+        err(f"no task matches '{args.slug}'")
+        return 1
+    if len(matches) > 1:
+        err(f"'{args.slug}' matches multiple tasks: {', '.join(t.slug for t in matches)}")
+        return 1
+    target = matches[0]
+    state = read_state(target.state_path)
+    if state.status != "blocked":
+        warn(f"task {target.slug} is {state.status}, not blocked — nothing to do")
+        return 0
+    prev = state.blocked_reason or "(none)"
+    state.status = "active"
+    state.blocked_reason = None
+    state.no_progress_ticks = 0
+    write_state(target.state_path, state)
+    say(f"unblocked {target.slug} (was: {prev})")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     worksite = worksite_root(args)
     config = load_config(worksite)
@@ -1248,10 +1375,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # permission mode
     if config.permissions.dangerous_auto_approve:
         warn("dangerous_auto_approve=TRUE — checking for sandbox marker")
-        in_sandbox = (
-            Path("/.dockerenv").exists()
-            or os.environ.get("SIMPLEHARNESS_SANDBOX") == "1"
-        )
+        in_sandbox = Path("/.dockerenv").exists() or os.environ.get("SIMPLEHARNESS_SANDBOX") == "1"
         if in_sandbox:
             say("sandbox marker detected — dangerous mode allowed", style="green")
         else:
@@ -1300,9 +1424,7 @@ def build_argparser() -> argparse.ArgumentParser:
 
     p_new = sub.add_parser("new", parents=[common], help="scaffold a new task")
     p_new.add_argument("title", help="one-line task title")
-    p_new.add_argument(
-        "--workflow", default="universal", help="workflow name (default: universal)"
-    )
+    p_new.add_argument("--workflow", default="universal", help="workflow name (default: universal)")
     p_new.set_defaults(func=cmd_new)
 
     p_watch = sub.add_parser("watch", parents=[common], help="long-lived loop (primary mode)")
@@ -1323,6 +1445,14 @@ def build_argparser() -> argparse.ArgumentParser:
     p_show = sub.add_parser("show", parents=[common], help="show details of one task")
     p_show.add_argument("slug")
     p_show.set_defaults(func=cmd_show)
+
+    p_unblock = sub.add_parser(
+        "unblock",
+        parents=[common],
+        help="reset a blocked task to active (clears blocked_reason)",
+    )
+    p_unblock.add_argument("slug", help="task slug or unique substring")
+    p_unblock.set_defaults(func=cmd_unblock)
 
     p_doctor = sub.add_parser("doctor", parents=[common], help="sanity checks")
     p_doctor.set_defaults(func=cmd_doctor)

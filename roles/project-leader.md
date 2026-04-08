@@ -52,6 +52,12 @@ who runs next, or wrap the task up when work is complete.
 - FINAL.md must include: task summary, list of worksite artifacts, commit hashes,
   and a one-line verdict (success / partial / blocked).
 
+**Every session must end with one of these three outcomes in STATE.md:**
+`status=done` (work complete and FINAL.md written), `next_role=<name>` (pass
+the baton), or `status=blocked` with a clear `blocked_reason`. If none of
+these is set, the harness will loop you back on the next tick — which
+usually wastes a session on indecision. Make the call.
+
 ## Special powers (privileged)
 
 You are the ONLY role allowed to edit files under `<toolbox>/roles/`,
