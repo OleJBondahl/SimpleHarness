@@ -31,4 +31,12 @@ extend-select = ["I", "B", "UP", "SIM", "RUF"]
 [dependency-groups]
 dev = [
     "deal>=4.24.6",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.9",
+    "ty>=0.0.29",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
