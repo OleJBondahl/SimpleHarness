@@ -39,6 +39,8 @@ _WRAPPER_FLAGS_WITH_VALUE: frozenset[str] = frozenset(
 # an earlier block then commit to a final one at the bottom.
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL | re.IGNORECASE)
 
+_POSIX_SHELL = os.name != "nt"
+
 # ────────────────────────────────────────────────────────────────────────────
 # Dataclasses
 # ────────────────────────────────────────────────────────────────────────────
@@ -106,7 +108,7 @@ def command_signature(command: str) -> str:
     if not raw:
         return "Bash"
     try:
-        parts = shlex.split(raw, posix=(os.name != "nt"))
+        parts = shlex.split(raw, posix=_POSIX_SHELL)
     except ValueError:
         parts = raw.split()
     if not parts:
