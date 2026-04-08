@@ -30,9 +30,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from simpleharness.core import (
-    DEFAULT_TOOLS_ALLOW as DEFAULT_TOOLS_ALLOW,  # re-export
-)
-from simpleharness.core import (
+    DEFAULT_BASH_ALLOW,
     Config,
     Role,
     SessionResult,
@@ -51,6 +49,10 @@ from simpleharness.core import (
     resolve_next_role,
     toolbox_root,
     worksite_sh_dir,
+    write_approver_allowlist,
+)
+from simpleharness.core import (
+    DEFAULT_TOOLS_ALLOW as DEFAULT_TOOLS_ALLOW,  # re-export
 )
 from simpleharness.core import (
     Permissions as Permissions,  # re-export for downstream scripts
@@ -259,6 +261,44 @@ def consume_correction(task: Task) -> str | None:
         f.write(f"\n----- {now_iso()} -----\n{text}\n")
     cpath.unlink()
     return text
+
+
+def list_phase_files(task_folder: Path) -> list[Path]:
+    """Return existing NN-*.md phase files in numeric order."""
+    pat = re.compile(r"^\d\d-.*\.md$")
+    out = [p for p in task_folder.iterdir() if p.is_file() and pat.match(p.name)]
+    return sorted(out, key=lambda p: p.name)
+
+
+def _write_approver_settings(task_dir: Path) -> Path:
+    """Write .approver-settings.json registering the PreToolUse hook.
+
+    The hook is scoped to the Bash matcher only — other tools flow
+    through the normal --allowedTools check. Lifecycle mirrors
+    .session_prompt.md: overwritten each session, left on disk for
+    post-hoc debugging. Returns the path to the written file.
+    """
+    hook_script = (toolbox_root() / "simpleharness_approver_hook.sh").as_posix()
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"bash {hook_script}",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    out_path = task_dir / ".approver-settings.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    return out_path
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -515,7 +555,8 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     correction = consume_correction(task)
 
     # 2. build and write prompt
-    prompt = build_session_prompt(task, role, workflow, toolbox, correction)
+    phase_files = list_phase_files(task.folder)
+    prompt = build_session_prompt(task, role, workflow, toolbox, correction, phase_files)
     prompt_file = write_session_prompt_file(task, prompt)
 
     # 3. log paths (built before the command so approver mode can point the
@@ -526,16 +567,21 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     jsonl_log = log_root / f"{stem}.jsonl"
     plain_log = log_root / f"{stem}.log"
 
-    # 4. build command
+    # 4. build command — pre-write approver files in shell before calling core
     session_id = str(uuid.uuid4())
+    if config.permissions.mode == "approver":
+        bash_patterns = list(DEFAULT_BASH_ALLOW) + list(config.permissions.extra_bash_allow)
+        write_approver_allowlist(task.folder, bash_patterns)
+        approver_settings_path = _write_approver_settings(task.folder)
+    else:
+        approver_settings_path = None
     cmd = build_claude_cmd(
         prompt_file,
         role,
         toolbox,
         session_id,
         config,
-        task=task,
-        jsonl_log=jsonl_log,
+        approver_settings_path=approver_settings_path,
     )
 
     # 5. banner
@@ -641,7 +687,8 @@ def tick_once(worksite: Path, config: Config) -> bool:
         say("no tasks in simpleharness/tasks/", style="dim")
         return False
 
-    task = pick_next_task(tasks)
+    corrections = frozenset(t.slug for t in tasks if (t.folder / "CORRECTION.md").exists())
+    task = pick_next_task(tasks, corrections)
     if task is None:
         say("no active tasks", style="dim")
         return False

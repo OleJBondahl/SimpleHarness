@@ -585,13 +585,17 @@ def worksite_sh_dir(worksite: Path) -> Path:
     return worksite / "simpleharness"
 
 
-def pick_next_task(tasks: list[Task]) -> Task | None:
-    """Priority: CORRECTION.md exists > active non-blocked > lowest slug."""
+def pick_next_task(tasks: list[Task], corrections: frozenset[str]) -> Task | None:
+    """Priority: CORRECTION.md exists > active non-blocked > lowest slug.
+
+    ``corrections`` is the pre-computed set of task slugs that have a
+    CORRECTION.md on disk — the shell caller performs that I/O.
+    """
     candidates = [t for t in tasks if t.state.status == "active"]
     if not candidates:
         return None
     # tasks with CORRECTION.md take priority
-    with_correction = [t for t in candidates if (t.folder / "CORRECTION.md").exists()]
+    with_correction = [t for t in candidates if t.slug in corrections]
     if with_correction:
         return sorted(with_correction, key=lambda t: t.slug)[0]
     return sorted(candidates, key=lambda t: t.slug)[0]
@@ -622,26 +626,23 @@ def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
     return phases[idx + 1]
 
 
-def list_phase_files(task_folder: Path) -> list[Path]:
-    """Return existing NN-*.md phase files in numeric order."""
-    pat = re.compile(r"^\d\d-.*\.md$")
-    out = [p for p in task_folder.iterdir() if p.is_file() and pat.match(p.name)]
-    return sorted(out, key=lambda p: p.name)
-
-
 def build_session_prompt(
     task: Task,
     role: Role,
     workflow: Workflow,
     toolbox: Path,
     correction_text: str | None,
+    phase_files: list[Path],
 ) -> str:
     """Assemble the spatial-awareness preamble + phase instructions.
 
     Returns the full text. Caller writes it to <task>/.session_prompt.md and
     passes -p @<that-file> to claude.
+
+    ``phase_files`` is the pre-computed list of existing NN-*.md phase files —
+    the shell caller performs that I/O via ``list_phase_files``.
     """
-    existing_files = [p.name for p in list_phase_files(task.folder)]
+    existing_files = [p.name for p in phase_files]
     existing_section = "\n".join(f"- {name}" for name in existing_files) or "- (none yet)"
 
     correction_block = ""
@@ -725,37 +726,6 @@ def _build_allowlist(role: Role, config: Config) -> str:
     return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
 
 
-def _write_approver_settings(task_dir: Path) -> Path:
-    """Write .approver-settings.json registering the PreToolUse hook.
-
-    The hook is scoped to the Bash matcher only — other tools flow
-    through the normal --allowedTools check. Lifecycle mirrors
-    .session_prompt.md: overwritten each session, left on disk for
-    post-hoc debugging. Returns the path to the written file.
-    """
-    hook_script = (toolbox_root() / "simpleharness_approver_hook.sh").as_posix()
-    settings = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": f"bash {hook_script}",
-                        }
-                    ],
-                }
-            ]
-        }
-    }
-    out_path = task_dir / ".approver-settings.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-    return out_path
-
-
 def build_claude_cmd(
     prompt_file: Path,
     role: Role,
@@ -763,15 +733,13 @@ def build_claude_cmd(
     session_id: str,
     config: Config,
     *,
-    task: Task | None = None,
-    jsonl_log: Path | None = None,
+    approver_settings_path: Path | None = None,
 ) -> list[str]:
     """Assemble the full `claude` command line for a single session.
 
-    `task` and `jsonl_log` are required when `config.permissions.mode` is
-    `approver` — they locate the task dir for the settings + allowlist
-    files, and the jsonl log is re-exported via env for the slow-path
-    hook to tail.
+    In approver mode, the shell caller must pre-write the allowlist and
+    settings files and pass ``approver_settings_path`` pointing to the
+    written settings file.
     """
     cmd: list[str] = [
         "claude",
@@ -796,17 +764,10 @@ def build_claude_cmd(
     if mode == "dangerous":
         cmd += ["--permission-mode", "bypassPermissions"]
     elif mode == "approver":
-        if task is None or jsonl_log is None:
-            raise ValueError("approver mode requires task and jsonl_log arguments")
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
-        # Seed the fast-path allowlist file so the bash PreToolUse hook
-        # has the merged default + worksite patterns on the first call,
-        # before the Python slow path has a chance to refresh it.
-        bash_patterns = list(DEFAULT_BASH_ALLOW) + list(config.permissions.extra_bash_allow)
-        write_approver_allowlist(task.folder, bash_patterns)
-        settings_path = _write_approver_settings(task.folder)
-        cmd += ["--settings", str(settings_path)]
+        if approver_settings_path is not None:
+            cmd += ["--settings", str(approver_settings_path)]
     else:
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
