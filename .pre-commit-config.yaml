@@ -22,3 +22,10 @@ repos:
         types_or: [python, pyi]
         pass_filenames: false
         require_serial: true
+
+      - id: deal-lint
+        name: deal lint (FP purity)
+        entry: uv run python -X utf8 -m deal lint
+        language: system
+        types: [python]
+        pass_filenames: true
