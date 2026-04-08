@@ -42,7 +42,7 @@ class Config:
     max_same_role_repeats: int = 3
     no_progress_tick_threshold: int = 5
     max_turns_default: int = 60
-    include_partial_messages: bool = False
+    include_partial_messages: bool = True
     permissions: Permissions = field(default_factory=Permissions)
 
 
@@ -195,11 +195,52 @@ def load_role(name: str) -> Role:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+def _pid_alive(pid: int) -> bool:
+    """Return True if `pid` refers to a running process.
+
+    Conservative: on any unexpected failure, returns True (treat as alive)
+    so we don't accidentally steal a live lock.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        SYNCHRONIZE = 0x00100000
+        ERROR_INVALID_PARAMETER = 87
+        try:
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            err = ctypes.get_last_error() or kernel32.GetLastError()
+            # ERROR_INVALID_PARAMETER -> dead; anything else (e.g. access
+            # denied) -> assume alive-but-foreign.
+            return err != ERROR_INVALID_PARAMETER
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
 class _FileLock:
     """Cross-platform exclusive lock via sibling .lock file.
 
     Uses os.open with O_CREAT | O_EXCL, which is atomic on both Windows and
-    POSIX filesystems. Spins with short sleeps until acquired.
+    POSIX filesystems. Spins with short sleeps until acquired. Writes the
+    holder's PID into the lockfile so stale locks from crashed holders can
+    be reclaimed on the next acquisition attempt.
     """
 
     def __init__(self, target: Path, timeout: float = 10.0, poll: float = 0.05) -> None:
@@ -212,19 +253,52 @@ class _FileLock:
         deadline = time.monotonic() + self.timeout
         while True:
             try:
-                self._fd = os.open(
+                fd = os.open(
                     str(self.lock_path),
                     os.O_CREAT | os.O_EXCL | os.O_RDWR,
                 )
-                return self
             except FileExistsError:
+                # Inspect the existing lockfile to see if the holder is dead.
+                reclaimed = False
+                try:
+                    with open(self.lock_path, "rb") as f:
+                        raw = f.read().strip()
+                    if raw:
+                        try:
+                            other_pid = int(raw)
+                        except ValueError:
+                            other_pid = -1
+                        if other_pid > 0 and not _pid_alive(other_pid):
+                            with contextlib.suppress(FileNotFoundError):
+                                os.unlink(self.lock_path)
+                            reclaimed = True
+                    # Empty/unreadable PID: be conservative, treat as alive.
+                except FileNotFoundError:
+                    # Lock disappeared between the two calls; retry immediately.
+                    reclaimed = True
+                except OSError:
+                    # Any other read error: be conservative, treat as alive.
+                    pass
+                if reclaimed:
+                    continue
                 if time.monotonic() >= deadline:
                     raise TimeoutError(
                         f"could not acquire lock {self.lock_path} within {self.timeout}s"
                     ) from None
                 time.sleep(self.poll)
+                continue
+            # Acquired: stamp our PID into the lockfile contents so a future
+            # caller can detect and reclaim the file if this process dies.
+            # Non-fatal on OSError: the lock still exists; reclaim path just
+            # won't be able to read a PID and will conservatively spin.
+            with contextlib.suppress(OSError):
+                os.write(fd, str(os.getpid()).encode("ascii"))
+            self._fd = fd
+            return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        # NOTE: On Windows the fd MUST be closed before os.unlink, otherwise
+        # the unlink fails with a sharing violation. Preserve this ordering.
         if self._fd is not None:
             try:
                 os.close(self._fd)
