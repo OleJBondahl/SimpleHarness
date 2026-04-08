@@ -86,15 +86,15 @@ console = Console()
 
 def say(msg: str, *, style: str = "cyan") -> None:
     """Print a harness-prefixed message to the terminal."""
-    console.print(f"[{style}][harness][/] {msg}")
+    console.print(rf"[{style}]\[harness][/] {msg}")
 
 
 def warn(msg: str) -> None:
-    console.print(f"[yellow][harness WARNING][/] {msg}")
+    console.print(rf"[yellow]\[harness WARNING][/] {msg}")
 
 
 def err(msg: str) -> None:
-    console.print(f"[red][harness ERROR][/] {msg}")
+    console.print(rf"[red]\[harness ERROR][/] {msg}")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -387,8 +387,23 @@ def now_iso() -> str:
 
 
 def worksite_root_from_cwd() -> Path:
-    """The worksite is wherever the user invoked `simpleharness` from."""
+    """The worksite is wherever the user invoked `simpleharness` from.
+
+    Override via the global --worksite flag or the SIMPLEHARNESS_WORKSITE
+    environment variable.
+    """
+    env = os.environ.get("SIMPLEHARNESS_WORKSITE")
+    if env:
+        return Path(env).resolve()
     return Path.cwd().resolve()
+
+
+def worksite_root(args: argparse.Namespace) -> Path:
+    """Resolve the worksite path: --worksite flag > env var > cwd."""
+    flag = getattr(args, "worksite", None)
+    if flag:
+        return Path(flag).resolve()
+    return worksite_root_from_cwd()
 
 
 def worksite_sh_dir(worksite: Path) -> Path:
@@ -707,9 +722,9 @@ def _pretty_event(event: dict[str, Any]) -> None:
                 tinput = block.get("input", {})
                 # keep tool calls compact
                 brief = json.dumps(tinput, ensure_ascii=False)[:200]
-                console.print(f"[magenta]  [tool][/] {tname}  [dim]{brief}[/]")
+                console.print(rf"[magenta]  \[tool][/] {tname}  [dim]{brief}[/]", markup=True)
             elif btype == "thinking":
-                console.print("[dim italic]  [thinking...][/]")
+                console.print(r"[dim italic]  \[thinking\.\.\.][/]")
         return
     if etype == "user":
         msg = event.get("message", {})
@@ -721,7 +736,8 @@ def _pretty_event(event: dict[str, Any]) -> None:
                         c.get("text", "") for c in content if isinstance(c, dict)
                     )
                 summary = str(content)[:300].replace("\n", " ⏎ ")
-                console.print(f"[green]  [result][/] [dim]{summary}[/]")
+                from rich.markup import escape as _rich_escape
+                console.print(rf"[green]  \[result][/] [dim]{_rich_escape(summary)}[/]")
         return
     if etype == "result":
         status = "ok" if not event.get("is_error") else "ERROR"
@@ -739,7 +755,7 @@ def _pretty_event(event: dict[str, Any]) -> None:
         )
         return
     # unknown type - show briefly
-    console.print(f"[dim]  [{etype}][/]")
+    console.print(rf"[dim]  \[{etype}][/]")
 
 
 def stream_and_log(
@@ -771,7 +787,8 @@ def stream_and_log(
             except json.JSONDecodeError:
                 pf.write(line + "\n")
                 pf.flush()
-                console.print(f"[dim red]  [non-json][/] {line[:200]}")
+                from rich.markup import escape as _rich_escape
+                console.print(rf"[dim red]  \[non-json][/] {_rich_escape(line[:200])}")
                 continue
             # capture identifiers
             if isinstance(event, dict):
@@ -812,7 +829,7 @@ def read_stdin_until_blank() -> list[str]:
     """
     lines: list[str] = []
     console.print(
-        "\n[yellow][harness][/] Type your correction. "
+        "\n[yellow]\\[harness][/] Type your correction. "
         "Blank line + Enter = save & resume. Ctrl+C again = abort.\n",
     )
     try:
@@ -1051,8 +1068,8 @@ def _next_task_index(tasks_dir: Path) -> int:
     return highest + 1
 
 
-def cmd_init(_args: argparse.Namespace) -> int:
-    worksite = worksite_root_from_cwd()
+def cmd_init(args: argparse.Namespace) -> int:
+    worksite = worksite_root(args)
     sh = worksite_sh_dir(worksite)
     for sub in ("tasks", "memory", "logs"):
         (sh / sub).mkdir(parents=True, exist_ok=True)
@@ -1067,7 +1084,7 @@ def cmd_init(_args: argparse.Namespace) -> int:
 
 
 def cmd_new(args: argparse.Namespace) -> int:
-    worksite = worksite_root_from_cwd()
+    worksite = worksite_root(args)
     sh = worksite_sh_dir(worksite)
     if not sh.exists():
         warn("simpleharness/ folder not found — running `init` first")
@@ -1115,7 +1132,7 @@ def cmd_new(args: argparse.Namespace) -> int:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
-    worksite = worksite_root_from_cwd()
+    worksite = worksite_root(args)
     config = load_config(worksite)
     if not worksite_sh_dir(worksite).exists():
         warn("simpleharness/ folder not found — running `init` first")
@@ -1137,8 +1154,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return 0
 
 
-def cmd_status(_args: argparse.Namespace) -> int:
-    worksite = worksite_root_from_cwd()
+def cmd_status(args: argparse.Namespace) -> int:
+    worksite = worksite_root(args)
     tasks = discover_tasks(worksite)
     if not tasks:
         say("no tasks")
@@ -1158,7 +1175,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_show(args: argparse.Namespace) -> int:
-    worksite = worksite_root_from_cwd()
+    worksite = worksite_root(args)
     tasks = {t.slug: t for t in discover_tasks(worksite)}
     t = tasks.get(args.slug)
     if not t:
@@ -1181,8 +1198,8 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_doctor(_args: argparse.Namespace) -> int:
-    worksite = worksite_root_from_cwd()
+def cmd_doctor(args: argparse.Namespace) -> int:
+    worksite = worksite_root(args)
     config = load_config(worksite)
     ok = True
 
@@ -1267,17 +1284,28 @@ def build_argparser() -> argparse.ArgumentParser:
         description="Lightweight baton-pass agent harness over the Claude Code CLI",
     )
     p.add_argument("--version", action="version", version=f"simpleharness {VERSION}")
+
+    # Common flags every subcommand inherits.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--worksite",
+        metavar="PATH",
+        help="worksite path (default: current directory or $SIMPLEHARNESS_WORKSITE)",
+    )
+
     sub = p.add_subparsers(dest="command")
 
-    p_init = sub.add_parser("init", help="create simpleharness/ folder layout")
+    p_init = sub.add_parser("init", parents=[common], help="create simpleharness/ folder layout")
     p_init.set_defaults(func=cmd_init)
 
-    p_new = sub.add_parser("new", help="scaffold a new task")
+    p_new = sub.add_parser("new", parents=[common], help="scaffold a new task")
     p_new.add_argument("title", help="one-line task title")
-    p_new.add_argument("--workflow", default="universal", help="workflow name (default: universal)")
+    p_new.add_argument(
+        "--workflow", default="universal", help="workflow name (default: universal)"
+    )
     p_new.set_defaults(func=cmd_new)
 
-    p_watch = sub.add_parser("watch", help="long-lived loop (primary mode)")
+    p_watch = sub.add_parser("watch", parents=[common], help="long-lived loop (primary mode)")
     p_watch.add_argument("--once", action="store_true", help="do one tick then exit")
     p_watch.add_argument(
         "--i-know-its-dangerous",
@@ -1286,17 +1314,17 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     p_watch.set_defaults(func=cmd_watch)
 
-    p_status = sub.add_parser("status", help="list active tasks + current phase")
+    p_status = sub.add_parser("status", parents=[common], help="list active tasks + current phase")
     p_status.set_defaults(func=cmd_status)
 
-    p_list = sub.add_parser("list", help="list all tasks")
+    p_list = sub.add_parser("list", parents=[common], help="list all tasks")
     p_list.set_defaults(func=cmd_list)
 
-    p_show = sub.add_parser("show", help="show details of one task")
+    p_show = sub.add_parser("show", parents=[common], help="show details of one task")
     p_show.add_argument("slug")
     p_show.set_defaults(func=cmd_show)
 
-    p_doctor = sub.add_parser("doctor", help="sanity checks")
+    p_doctor = sub.add_parser("doctor", parents=[common], help="sanity checks")
     p_doctor.set_defaults(func=cmd_doctor)
 
     return p
