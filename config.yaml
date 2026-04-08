@@ -1,0 +1,49 @@
+# SimpleHarness toolbox defaults.
+# Override per-worksite by placing a config.yaml in <worksite>/simpleharness/
+# (only the fields you want to override — the rest fall through to these).
+
+# ---- Model ----
+# Model used for every role session. Roles use subagents to offload work
+# to Sonnet/Haiku for context efficiency — see each role's body.
+model: opus
+
+# ---- Heartbeat ----
+# Idle sleep between ticks when no task is active.
+idle_sleep_seconds: 30
+
+# ---- Per-task safety caps ----
+# Hard cap on how many sessions a single task can consume before being blocked.
+max_sessions_per_task: 20
+
+# A single role can run at most this many times in a row before the harness
+# blocks the task (catches developer <-> expert-critic flip-flops).
+max_same_role_repeats: 3
+
+# If STATE.md content hash is unchanged across this many consecutive ticks
+# while status=active, the harness pauses and warns the user.
+no_progress_tick_threshold: 5
+
+# Fallback for --max-turns if a role does not override it in its frontmatter.
+max_turns_default: 60
+
+# ---- Streaming output ----
+# Pass --include-partial-messages to claude so tokens stream live.
+include_partial_messages: true
+
+# ---- Permissions ----
+permissions:
+  # SAFE default: --permission-mode acceptEdits + curated Bash allowlist.
+  # Setting this to true switches to --permission-mode bypassPermissions,
+  # which approves EVERYTHING (including arbitrary Bash). Only enable in a
+  # sandbox/container/VM — `simpleharness doctor` will refuse to start
+  # `watch` unless it detects a sandbox marker or you pass
+  # --i-know-its-dangerous.
+  dangerous_auto_approve: false
+
+  # Extra Bash patterns merged with harness.py DEFAULT_BASH_ALLOW.
+  # Each entry is a glob pattern inside the Bash() wrapper, e.g. "make *".
+  extra_bash_allow: []
+
+  # Extra tool names merged with harness.py DEFAULT_TOOLS_ALLOW.
+  # e.g. ["WebFetch", "WebSearch"]
+  extra_tools_allow: []

@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "Read",
+      "Glob",
+      "Grep",
+      "NotebookEdit",
+      "Agent",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git stash *)",
+      "Bash(git restore *)",
+      "Bash(git checkout *)",
+      "Bash(git branch *)",
+      "Bash(git show *)",
+      "Bash(uv run *)",
+      "Bash(uv sync)",
+      "Bash(uv add *)",
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+      "Bash(ty *)",
+      "Bash(python -m *)",
+      "Bash(node *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(* --version)",
+      "Bash(* --help *)"
+    ]
+  }
+}

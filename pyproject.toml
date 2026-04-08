@@ -1,0 +1,28 @@
+[project]
+name = "simpleharness"
+version = "0.1.0"
+description = "Lightweight baton-pass agent harness over the Claude Code CLI"
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [{ name = "Ole Johan Bondahl" }]
+dependencies = [
+    "pyyaml>=6.0",
+    "rich>=13.7",
+]
+
+[project.scripts]
+simpleharness = "harness:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["harness"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "UP", "SIM", "RUF"]
