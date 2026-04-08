@@ -13,6 +13,12 @@ uv tool install -e C:/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness
 
 `simpleharness` is now on your PATH from any directory.
 
+For development on this repo, also run once:
+
+```bash
+uvx pre-commit install   # enables ruff + ty pre-commit hook
+```
+
 ## Quick start
 
 ```bash

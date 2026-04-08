@@ -21,7 +21,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -380,7 +380,7 @@ def state_hash(path: Path) -> str:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1392,7 +1392,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if sh.exists():
         say(f"worksite simpleharness/ dir: {sh}", style="green")
     else:
-        warn(f"worksite simpleharness/ dir missing — run `simpleharness init`")
+        warn("worksite simpleharness/ dir missing — run `simpleharness init`")
 
     return 0 if ok else 1
 
