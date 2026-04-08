@@ -35,12 +35,10 @@ from pathlib import Path
 from typing import Any
 
 from simpleharness_core import (
-    DEFAULT_BASH_ALLOW,
-    append_approved_pattern,
     load_config,
     load_role,
+    persist_approver_allow,
     toolbox_root,
-    write_approver_allowlist,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -53,6 +51,12 @@ _WRAPPER_COMMANDS: frozenset[str] = frozenset(
 
 _WRAPPER_FLAG_RE = re.compile(r"^-")
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# Defense-in-depth: SIMPLEHARNESS_TASK_SLUG is meant to be the kebab-case
+# slug produced by ``simpleharness new``. Reject anything that could
+# traverse out of the task dir (``..``, ``/``, ``\``) before we use it
+# to construct paths.
+_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 _WRAPPER_FLAGS_WITH_VALUE: frozenset[str] = frozenset(
     {"-u", "-g", "-h", "-p", "-D", "-C", "-T", "-r", "-t", "--user", "--group"}
@@ -129,7 +133,7 @@ def command_signature(command: str) -> str:
 
 # Last fenced JSON code block wins — models sometimes show a draft in
 # an earlier block then commit to a final one at the bottom.
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL | re.IGNORECASE)
 
 
 def _deny_synthetic(reason: str) -> Verdict:
@@ -268,6 +272,8 @@ def _load_env() -> ApproverEnv | str:
     task_slug = os.environ.get("SIMPLEHARNESS_TASK_SLUG")
     if not task_slug:
         return "approver not properly initialized: missing SIMPLEHARNESS_TASK_SLUG"
+    if not _SLUG_RE.match(task_slug):
+        return f"invalid SIMPLEHARNESS_TASK_SLUG shape: {task_slug!r}"
 
     role = os.environ.get("SIMPLEHARNESS_ROLE", "developer")
     approver_model = os.environ.get("SIMPLEHARNESS_APPROVER_MODEL", "sonnet")
@@ -579,6 +585,13 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
         _stderr(f"load_role('approver') failed: {e}")
         return _deny_synthetic(f"approver role missing or invalid: {e}")
 
+    # Belt-and-braces: construct the exact path the spawn will pass to
+    # ``--append-system-prompt-file`` and verify it exists here so we
+    # never silently spawn a child with a bogus prompt file.
+    role_path = toolbox_root() / "roles" / "approver.md"
+    if not role_path.is_file():
+        return _deny_synthetic(f"approver role file not found at {role_path}")
+
     stream_tail = _read_stream_tail(env.stream_log)
 
     prompt = build_approver_prompt(
@@ -615,7 +628,7 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
             final_msg = _spawn_approver(
                 prompt=prompt,
                 approver_model=env.approver_model,
-                approver_role_path=(toolbox_root() / "roles" / "approver.md"),
+                approver_role_path=role_path,
                 task_log_dir=task_log_dir,
                 worksite=env.worksite,
                 timeout_s=env.timeout_s,
@@ -635,21 +648,15 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
 
     if verdict.decision == "allow":
         pattern = verdict.pattern
+        # Persist the pattern to config.yaml AND refresh the fast-path
+        # allowlist under a single shared lock so concurrent approver
+        # processes cannot race and drop patterns from the allowlist
+        # file. Config write is best-effort: on failure we still allow
+        # the current call so the working agent isn't blocked.
         try:
-            append_approved_pattern(env.worksite, pattern)
+            persist_approver_allow(env.worksite, pattern, _task_dir(env.worksite, env.task_slug))
         except Exception as e:
-            _stderr(f"append_approved_pattern failed: {e}")
-            # Still allow this one call — config write is best-effort.
-            return verdict
-        # Refresh the fast-path allowlist so the next call in this
-        # session hits the bash path. Reload config so the just-appended
-        # pattern is included.
-        try:
-            cfg2 = load_config(env.worksite)
-            merged = list(DEFAULT_BASH_ALLOW) + list(cfg2.permissions.extra_bash_allow)
-            write_approver_allowlist(_task_dir(env.worksite, env.task_slug), merged)
-        except Exception as e:
-            _stderr(f"write_approver_allowlist failed: {e}")
+            _stderr(f"persist_approver_allow failed: {e}")
         _stderr(f"allow: pattern={pattern!r} reason={verdict.reason!r}")
         return verdict
 
@@ -661,37 +668,51 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
 
 
 def main() -> None:
-    """Thin shell entry point. Reads stdin, decodes, calls core, writes stdout."""
+    """Thin shell entry point. Reads stdin, decodes, calls core, writes stdout.
+
+    Wrapped in a top-level ``BaseException`` catch because this runs as
+    an unattended PreToolUse hook: any unhandled exception (including
+    ``KeyboardInterrupt`` and ``SystemExit``) would produce a traceback
+    on stderr and empty stdout, which Claude Code sees as a malformed
+    hook response. Silent graceful deny is the right default here.
+    """
     try:
-        raw = sys.stdin.read()
-        envelope = json.loads(raw) if raw.strip() else {}
-    except Exception as exc:
-        _emit("deny", f"hook failed to parse stdin envelope: {exc}")
-        return
+        try:
+            raw = sys.stdin.read()
+            envelope = json.loads(raw) if raw.strip() else {}
+        except Exception as exc:
+            _emit("deny", f"hook failed to parse stdin envelope: {exc}")
+            return
 
-    tool_name = envelope.get("tool_name") if isinstance(envelope, dict) else None
-    if not isinstance(tool_name, str) or not tool_name:
-        tool_name = "<unknown>"
-    tool_input = envelope.get("tool_input") if isinstance(envelope, dict) else {}
-    if not isinstance(tool_input, dict):
-        tool_input = {}
+        tool_name = envelope.get("tool_name") if isinstance(envelope, dict) else None
+        if not isinstance(tool_name, str) or not tool_name:
+            tool_name = "<unknown>"
+        tool_input = envelope.get("tool_input") if isinstance(envelope, dict) else {}
+        if not isinstance(tool_input, dict):
+            tool_input = {}
 
-    env = _load_env()
-    if isinstance(env, str):
-        _emit("deny", env)
-        return
+        env = _load_env()
+        if isinstance(env, str):
+            _emit("deny", env)
+            return
 
-    try:
-        verdict = _review(env, tool_name, tool_input)
-    except ApproverTimeout as exc:
-        _emit("deny", f"approver timed out: {exc}")
-        return
-    except Exception as exc:
-        _stderr(f"hook internal error: {exc!r}")
-        _emit("deny", f"approver hook internal error: {type(exc).__name__}: {exc}")
-        return
+        try:
+            verdict = _review(env, tool_name, tool_input)
+        except ApproverTimeout as exc:
+            _emit("deny", f"approver timed out: {exc}")
+            return
+        except Exception as exc:
+            _stderr(f"hook internal error: {exc!r}")
+            _emit("deny", f"approver hook internal error: {type(exc).__name__}: {exc}")
+            return
 
-    _emit(verdict.decision, verdict.reason)
+        _emit(verdict.decision, verdict.reason)
+    except BaseException as exc:
+        # Hook must never crash — belt-and-braces suppress lets us still
+        # exit 0 even if stdout itself is broken.
+        with contextlib.suppress(Exception):
+            _emit("deny", f"approver hook interrupted: {type(exc).__name__}: {exc}")
+        return
 
 
 if __name__ == "__main__":

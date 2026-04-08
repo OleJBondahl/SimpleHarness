@@ -29,6 +29,16 @@ fi
 
 worksite="${SIMPLEHARNESS_WORKSITE:-}"
 task_slug="${SIMPLEHARNESS_TASK_SLUG:-}"
+
+# Defense-in-depth: reject path-traversal / weird shapes in the slug
+# before we splice it into a filesystem path. The harness always sets
+# a kebab-case slug (matching 'simpleharness new'); anything else means
+# the env is untrusted — silent exit lets Claude Code's normal permission
+# flow handle it (the slow path would also reject it with a diagnostic).
+if [ -n "$task_slug" ] && ! [[ "$task_slug" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    exit 0
+fi
+
 allowlist="${worksite}/simpleharness/tasks/${task_slug}/.approver-allowlist.txt"
 
 if [ -n "$worksite" ] && [ -n "$task_slug" ] && [ -f "$allowlist" ]; then

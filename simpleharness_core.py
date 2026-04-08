@@ -341,45 +341,65 @@ class _FileLock:
             os.unlink(self.lock_path)
 
 
+def _append_approved_pattern_unlocked(worksite: Path, pattern: str) -> None:
+    """Append `pattern` to <worksite>/simpleharness/config.yaml without
+    taking any file lock. Callers MUST already hold an outer lock that
+    serializes concurrent writers of config.yaml (e.g. the shared
+    ``.approver-refresh.lock`` held by ``persist_approver_allow``, or
+    ``_FileLock(cfg_path)`` held by ``append_approved_pattern``).
+
+    Idempotent: no-op if ``pattern`` is already present. Written
+    atomically via a temp-file + os.replace.
+    """
+    sh_dir = worksite / "simpleharness"
+    sh_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = sh_dir / "config.yaml"
+
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"{cfg_path}: expected a YAML mapping at top level")
+    else:
+        data = {}
+
+    perms = data.get("permissions")
+    if not isinstance(perms, dict):
+        perms = {}
+        data["permissions"] = perms
+
+    allow = perms.get("extra_bash_allow")
+    if not isinstance(allow, list):
+        allow = []
+        perms["extra_bash_allow"] = allow
+
+    if pattern in allow:
+        return
+
+    allow.append(pattern)
+
+    tmp_path = cfg_path.with_suffix(cfg_path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
+    os.replace(tmp_path, cfg_path)
+
+
 def append_approved_pattern(worksite: Path, pattern: str) -> None:
     """Append `pattern` to <worksite>/simpleharness/config.yaml under
     permissions.extra_bash_allow. Idempotent: no-op if already present.
 
     Guarded by a cross-platform file lock and written atomically via a
-    temp-file + os.replace.
+    temp-file + os.replace. Thin public wrapper around
+    ``_append_approved_pattern_unlocked`` — callers that need to hold
+    an outer lock (e.g. to refresh the fast-path allowlist atomically)
+    should use ``persist_approver_allow`` instead.
     """
     sh_dir = worksite / "simpleharness"
     sh_dir.mkdir(parents=True, exist_ok=True)
     cfg_path = sh_dir / "config.yaml"
 
     with _FileLock(cfg_path):
-        if cfg_path.exists():
-            with cfg_path.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            if not isinstance(data, dict):
-                raise ValueError(f"{cfg_path}: expected a YAML mapping at top level")
-        else:
-            data = {}
-
-        perms = data.get("permissions")
-        if not isinstance(perms, dict):
-            perms = {}
-            data["permissions"] = perms
-
-        allow = perms.get("extra_bash_allow")
-        if not isinstance(allow, list):
-            allow = []
-            perms["extra_bash_allow"] = allow
-
-        if pattern in allow:
-            return
-
-        allow.append(pattern)
-
-        tmp_path = cfg_path.with_suffix(cfg_path.suffix + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
-        os.replace(tmp_path, cfg_path)
+        _append_approved_pattern_unlocked(worksite, pattern)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -397,18 +417,16 @@ _ALLOWLIST_HEADER = (
 )
 
 
-def write_approver_allowlist(task_dir: Path, bash_patterns: list[str]) -> Path:
-    """Write .approver-allowlist.txt next to .session_prompt.md.
+def _write_approver_allowlist_unlocked(task_dir: Path, bash_patterns: list[str]) -> Path:
+    """Write .approver-allowlist.txt without taking any file lock.
 
-    The file is one glob pattern per line, with '#'-comment headers.
-    The bash fast-path hook reads this file and matches commands against
-    the patterns using bash 'case' pattern matching (fnmatch-equivalent).
+    Callers MUST already hold an outer lock that serializes concurrent
+    writers of the allowlist file (e.g. ``.approver-refresh.lock``
+    held by ``persist_approver_allow``, or ``_FileLock(out_path)``
+    held by ``write_approver_allowlist``).
 
     Deduplicates (preserving first-occurrence order), strips whitespace,
-    and skips empty entries. Written atomically (tmp + os.replace) under
-    the same `_FileLock` used by `append_approved_pattern` so the fast
-    path never reads a torn file and concurrent writers don't collide.
-
+    and skips empty entries. Written atomically (tmp + os.replace).
     Returns the absolute path to the written file.
     """
     task_dir.mkdir(parents=True, exist_ok=True)
@@ -429,10 +447,55 @@ def write_approver_allowlist(task_dir: Path, bash_patterns: list[str]) -> Path:
 
     body = _ALLOWLIST_HEADER + "".join(f"{p}\n" for p in ordered)
 
-    with _FileLock(out_path):
-        tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            f.write(body)
-        os.replace(tmp_path, out_path)
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        f.write(body)
+    os.replace(tmp_path, out_path)
 
     return out_path.resolve()
+
+
+def write_approver_allowlist(task_dir: Path, bash_patterns: list[str]) -> Path:
+    """Write .approver-allowlist.txt next to .session_prompt.md.
+
+    The file is one glob pattern per line, with '#'-comment headers.
+    The bash fast-path hook reads this file and matches commands against
+    the patterns using bash 'case' pattern matching (fnmatch-equivalent).
+
+    Deduplicates (preserving first-occurrence order), strips whitespace,
+    and skips empty entries. Written atomically (tmp + os.replace) under
+    a ``_FileLock`` on the target file so the fast path never reads a
+    torn file and concurrent writers don't collide. Thin public wrapper
+    around ``_write_approver_allowlist_unlocked`` — callers that need to
+    hold an outer lock across an append-to-config + rewrite-allowlist
+    sequence should use ``persist_approver_allow`` instead.
+
+    Returns the absolute path to the written file.
+    """
+    out_path = task_dir / ".approver-allowlist.txt"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    with _FileLock(out_path):
+        return _write_approver_allowlist_unlocked(task_dir, bash_patterns)
+
+
+def persist_approver_allow(
+    worksite: Path,
+    pattern: str,
+    task_dir: Path,
+) -> list[str]:
+    """Append pattern to worksite config AND refresh .approver-allowlist.txt.
+
+    Holds a single file lock for the entire read-append-read-write-write
+    sequence so concurrent approver processes cannot race past each other
+    and lose patterns. Returns the merged pattern list that was written
+    to .approver-allowlist.txt (DEFAULT_BASH_ALLOW + updated
+    extra_bash_allow, deduplicated in order).
+    """
+    lock_path = worksite / "simpleharness" / ".approver-refresh.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with _FileLock(lock_path):
+        _append_approved_pattern_unlocked(worksite, pattern)
+        cfg = load_config(worksite)
+        merged = list(DEFAULT_BASH_ALLOW) + list(cfg.permissions.extra_bash_allow)
+        _write_approver_allowlist_unlocked(task_dir, merged)
+    return merged
