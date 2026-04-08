@@ -11,15 +11,16 @@ dependencies = [
 ]
 
 [project.scripts]
-simpleharness = "harness:main"
-simpleharness-approver-hook = "simpleharness_approver_hook:main"
+simpleharness = "simpleharness.shell:main"
+simpleharness-approver-hook = "simpleharness.approver_shell:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["harness", "simpleharness_core", "simpleharness_approver_hook"]
+package-dir = {"" = "src"}
+packages = ["simpleharness"]
 
 [tool.ruff]
 line-length = 100

@@ -30,7 +30,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from simpleharness_core import (
+from simpleharness.core import (
     DEFAULT_BASH_ALLOW,
     Config,
     Role,
@@ -40,13 +40,13 @@ from simpleharness_core import (
     toolbox_root,
     write_approver_allowlist,
 )
-from simpleharness_core import (
+from simpleharness.core import (
     Permissions as Permissions,  # re-export for downstream scripts
 )
-from simpleharness_core import (
+from simpleharness.core import (
     _merge_config as _merge_config,  # re-export
 )
-from simpleharness_core import (
+from simpleharness.core import (
     parse_frontmatter as parse_frontmatter,  # re-export
 )
 

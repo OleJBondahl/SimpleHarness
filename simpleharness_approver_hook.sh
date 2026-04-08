@@ -75,4 +75,4 @@ fi
 # so the Python startup is the only cost on the slow path — no extra
 # bash overhead on top. The Python slow path reads the envelope from
 # its own stdin (the here-string).
-exec python -m simpleharness_approver_hook <<< "$envelope"
+exec python -m simpleharness.approver_shell <<< "$envelope"

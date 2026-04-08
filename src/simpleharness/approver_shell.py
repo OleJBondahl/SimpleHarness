@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from simpleharness_core import (
+from simpleharness.core import (
     load_config,
     load_role,
     persist_approver_allow,
