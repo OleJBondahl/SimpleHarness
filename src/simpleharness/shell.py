@@ -41,7 +41,6 @@ from simpleharness.core import (
     Task,
     Workflow,
     _format_tool_call,
-    _popen_kwargs_windows,
     _slugify,
     build_claude_cmd,
     build_session_prompt,
@@ -452,8 +451,8 @@ def err(msg: str) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Workflow loading (frontmatter parsers, config, and role loaders live in
-# simpleharness_core — imported at the top of this file).
+# Workflow loading (config/role loaders live above in this same file;
+# pure frontmatter parsing lives in simpleharness.core).
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -668,6 +667,13 @@ def _write_approver_settings(task_dir: Path) -> Path:
 # ────────────────────────────────────────────────────────────────────────────
 # claude subprocess invocation
 # ────────────────────────────────────────────────────────────────────────────
+
+
+def _popen_kwargs_windows() -> dict[str, Any]:
+    """Windows-specific: CREATE_NEW_PROCESS_GROUP so Ctrl+C stays in the parent."""
+    if sys.platform != "win32":
+        return {}
+    return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
 
 
 def spawn_claude(

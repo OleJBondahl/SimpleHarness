@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -120,10 +118,13 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 # Config loading (toolbox default + worksite override)
 # ────────────────────────────────────────────────────────────────────────────
 
+# Cached at import time to avoid repeated .resolve() filesystem syscalls.
+_TOOLBOX_ROOT: Path = Path(__file__).resolve().parent
+
 
 def toolbox_root() -> Path:
     """The toolbox repo root (where this module lives)."""
-    return Path(__file__).resolve().parent
+    return _TOOLBOX_ROOT
 
 
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -405,13 +406,6 @@ def build_claude_cmd(
         cmd += ["--allowedTools", _build_allowlist(role, config)]
 
     return cmd
-
-
-def _popen_kwargs_windows() -> dict[str, Any]:
-    """Windows-specific: CREATE_NEW_PROCESS_GROUP so Ctrl+C stays in the parent."""
-    if sys.platform != "win32":
-        return {}
-    return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
 
 
 def _format_tool_call(tname: str, tinput: dict[str, Any]) -> str:
