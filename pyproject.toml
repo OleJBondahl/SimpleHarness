@@ -8,17 +8,19 @@ authors = [{ name = "Ole Johan Bondahl" }]
 dependencies = [
     "pyyaml>=6.0",
     "rich>=13.7",
+    "mcp>=1.12,<2",
 ]
 
 [project.scripts]
 simpleharness = "harness:main"
+simpleharness-approver-mcp = "simpleharness_approver_mcp:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["harness", "simpleharness_core"]
+py-modules = ["harness", "simpleharness_core", "simpleharness_approver_mcp"]
 
 [tool.ruff]
 line-length = 100
