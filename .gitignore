@@ -17,3 +17,6 @@ Thumbs.db
 
 # Claude Code local overrides (keep settings.json, ignore .local.json)
 .claude/settings.local.json
+
+# Per-repo scratch scripts that agents use for ad-hoc verification
+claude-tools/

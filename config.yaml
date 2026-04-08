@@ -32,13 +32,30 @@ include_partial_messages: true
 
 # ---- Permissions ----
 permissions:
-  # SAFE default: --permission-mode acceptEdits + curated Bash allowlist.
-  # Setting this to true switches to --permission-mode bypassPermissions,
-  # which approves EVERYTHING (including arbitrary Bash). Only enable in a
-  # sandbox/container/VM — `simpleharness doctor` will refuse to start
-  # `watch` unless it detects a sandbox marker or you pass
-  # --i-know-its-dangerous.
-  dangerous_auto_approve: false
+  # Permission mode. One of:
+  #   safe       — --permission-mode acceptEdits + curated Bash allowlist.
+  #                Anything outside DEFAULT_BASH_ALLOW + extra_bash_allow is
+  #                denied. This is the default and fine on any host.
+  #   approver   — same floor as safe mode, but blocked tool calls are
+  #                forwarded to a per-worksite approver agent (see
+  #                simpleharness_approver_mcp.py). Allowed patterns are
+  #                appended to this file's extra_bash_allow so the workload
+  #                shrinks over time. Approver mode wiring lands in Task 4.
+  #   dangerous  — --permission-mode bypassPermissions. Approves EVERYTHING
+  #                including arbitrary Bash. Only enable in a sandbox/
+  #                container/VM — `simpleharness doctor` will refuse to
+  #                start `watch` unless it detects a sandbox marker or you
+  #                pass --i-know-its-dangerous.
+  mode: safe
+
+  # Model used by the approver agent when mode=approver.
+  # One of: haiku | sonnet | opus. Ignored in safe/dangerous modes.
+  approver_model: sonnet
+
+  # If true, the approver's deny verdicts are also appended as notes to the
+  # task's CORRECTION.md so the next session surfaces them to the user.
+  # Off by default.
+  escalate_denials_to_correction: false
 
   # Extra Bash patterns merged with harness.py DEFAULT_BASH_ALLOW.
   # Each entry is a glob pattern inside the Bash() wrapper, e.g. "make *".

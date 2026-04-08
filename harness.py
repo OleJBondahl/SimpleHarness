@@ -20,7 +20,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,24 @@ import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+
+from simpleharness_core import (
+    Config,
+    Role,
+    load_config,
+    load_role,
+    read_frontmatter_file,
+    toolbox_root,
+)
+from simpleharness_core import (
+    Permissions as Permissions,  # re-export for downstream scripts
+)
+from simpleharness_core import (
+    _merge_config as _merge_config,  # re-export
+)
+from simpleharness_core import (
+    parse_frontmatter as parse_frontmatter,  # re-export
+)
 
 # ────────────────────────────────────────────────────────────────────────────
 # Version + constants
@@ -103,37 +121,6 @@ def err(msg: str) -> None:
 
 
 @dataclass
-class Permissions:
-    dangerous_auto_approve: bool = False
-    extra_bash_allow: list[str] = field(default_factory=list)
-    extra_tools_allow: list[str] = field(default_factory=list)
-
-
-@dataclass
-class Config:
-    model: str = "opus"
-    idle_sleep_seconds: int = 30
-    max_sessions_per_task: int = 20
-    max_same_role_repeats: int = 3
-    no_progress_tick_threshold: int = 5
-    max_turns_default: int = 60
-    include_partial_messages: bool = False
-    permissions: Permissions = field(default_factory=Permissions)
-
-
-@dataclass
-class Role:
-    name: str
-    body: str  # the system prompt body (frontmatter stripped)
-    description: str = ""
-    model: str | None = None
-    max_turns: int | None = None
-    allowed_tools: list[str] = field(default_factory=list)
-    privileged: bool = False
-    source_path: Path | None = None
-
-
-@dataclass
 class Workflow:
     name: str
     phases: list[str]
@@ -179,108 +166,9 @@ class Task:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# YAML frontmatter helpers
+# Workflow loading (frontmatter parsers, config, and role loaders live in
+# simpleharness_core — imported at the top of this file).
 # ────────────────────────────────────────────────────────────────────────────
-
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
-
-
-def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
-    """Parse a markdown file with YAML frontmatter. Returns (metadata, body).
-
-    If no frontmatter is present, returns ({}, text).
-    """
-    m = _FRONTMATTER_RE.match(text)
-    if not m:
-        return {}, text
-    meta_raw, body = m.group(1), m.group(2)
-    try:
-        meta = yaml.safe_load(meta_raw) or {}
-    except yaml.YAMLError as e:
-        raise ValueError(f"invalid YAML frontmatter: {e}") from e
-    if not isinstance(meta, dict):
-        raise ValueError("frontmatter must be a mapping")
-    return meta, body
-
-
-def read_frontmatter_file(path: Path) -> tuple[dict[str, Any], str]:
-    return parse_frontmatter(path.read_text(encoding="utf-8"))
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Config loading (toolbox default + worksite override)
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def toolbox_root() -> Path:
-    """The toolbox repo root (where harness.py lives)."""
-    return Path(__file__).resolve().parent
-
-
-def _load_yaml_file(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"{path}: expected a YAML mapping at top level")
-    return data
-
-
-def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    out = dict(base)
-    for k, v in override.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _merge_config(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
-def load_config(worksite: Path) -> Config:
-    """Load toolbox config.yaml merged with per-worksite overrides."""
-    toolbox_cfg = _load_yaml_file(toolbox_root() / "config.yaml")
-    worksite_cfg = _load_yaml_file(worksite / "simpleharness" / "config.yaml")
-    merged = _merge_config(toolbox_cfg, worksite_cfg)
-
-    perms_raw = merged.get("permissions", {}) or {}
-    perms = Permissions(
-        dangerous_auto_approve=bool(perms_raw.get("dangerous_auto_approve", False)),
-        extra_bash_allow=list(perms_raw.get("extra_bash_allow", []) or []),
-        extra_tools_allow=list(perms_raw.get("extra_tools_allow", []) or []),
-    )
-    return Config(
-        model=str(merged.get("model", "opus")),
-        idle_sleep_seconds=int(merged.get("idle_sleep_seconds", 30)),
-        max_sessions_per_task=int(merged.get("max_sessions_per_task", 20)),
-        max_same_role_repeats=int(merged.get("max_same_role_repeats", 3)),
-        no_progress_tick_threshold=int(merged.get("no_progress_tick_threshold", 5)),
-        max_turns_default=int(merged.get("max_turns_default", 60)),
-        include_partial_messages=bool(merged.get("include_partial_messages", True)),
-        permissions=perms,
-    )
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Role + Workflow loading
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def load_role(name: str) -> Role:
-    path = toolbox_root() / "roles" / f"{name}.md"
-    if not path.exists():
-        raise FileNotFoundError(f"role '{name}' not found at {path}")
-    meta, body = read_frontmatter_file(path)
-    return Role(
-        name=str(meta.get("name", name)),
-        body=body.strip(),
-        description=str(meta.get("description", "")),
-        model=meta.get("model"),
-        max_turns=meta.get("max_turns"),
-        allowed_tools=list(meta.get("allowed_tools", []) or []),
-        privileged=bool(meta.get("privileged", False)),
-        source_path=path,
-    )
 
 
 def load_workflow(name: str) -> Workflow:
@@ -626,8 +514,11 @@ def build_claude_cmd(
     if config.include_partial_messages:
         cmd.append("--include-partial-messages")
 
-    if config.permissions.dangerous_auto_approve:
+    mode = config.permissions.mode
+    if mode == "dangerous":
         cmd += ["--permission-mode", "bypassPermissions"]
+    elif mode == "approver":
+        raise NotImplementedError("approver mode wiring lands in Task 4")
     else:
         cmd += ["--permission-mode", "acceptEdits"]
         tools = DEFAULT_TOOLS_ALLOW + role.allowed_tools + config.permissions.extra_tools_allow
@@ -1373,17 +1264,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ok = False
 
     # permission mode
-    if config.permissions.dangerous_auto_approve:
-        warn("dangerous_auto_approve=TRUE — checking for sandbox marker")
+    mode = config.permissions.mode
+    if mode == "dangerous":
+        warn("permissions.mode=dangerous — checking for sandbox marker")
         in_sandbox = Path("/.dockerenv").exists() or os.environ.get("SIMPLEHARNESS_SANDBOX") == "1"
         if in_sandbox:
             say("sandbox marker detected — dangerous mode allowed", style="green")
         else:
             err(
-                "dangerous_auto_approve=TRUE but no sandbox marker. "
+                "permissions.mode=dangerous but no sandbox marker. "
                 "Watch will refuse to run unless --i-know-its-dangerous is passed."
             )
             ok = False
+    elif mode == "approver":
+        say(
+            "permission mode: APPROVER (wiring lands in Task 4 — not runnable yet)",
+            style="yellow",
+        )
     else:
         say("permission mode: SAFE (acceptEdits + curated allowlist)", style="green")
 
@@ -1432,7 +1329,7 @@ def build_argparser() -> argparse.ArgumentParser:
     p_watch.add_argument(
         "--i-know-its-dangerous",
         action="store_true",
-        help="override sandbox check when dangerous_auto_approve=true",
+        help="override sandbox check when permissions.mode=dangerous",
     )
     p_watch.set_defaults(func=cmd_watch)
 
