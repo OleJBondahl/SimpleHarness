@@ -12,7 +12,7 @@ SimpleHarness runs `claude -p` in headless mode. Its "dangerous mode" (`config.p
 
 This doc specifies the minimum set of files — one `Dockerfile`, one `compose.yml`, two small shell scripts — that turn any Python or TypeScript git repo into a safe worksite for SimpleHarness running autonomously with full bypass permissions.
 
-**Target user:** solo developer on Windows 11 + Git Bash + Docker Desktop. Linux host support is a future extension (see [§13](#13-future-extensions)).
+**Target user:** solo developer on Windows 11 + Git Bash + Docker Desktop. Linux host support is a future extension (see [§14](#14-future-extensions)).
 
 **In scope:** one-command launch, persistent Claude Code login, per-worksite isolation, multi-instance parallelism, Windows path/TTY/CRLF handling, self-deletion guard.
 
@@ -434,7 +434,7 @@ The container makes dangerous mode safe by shrinking the blast radius to exactly
 | Worksite files | bind `:rw` | Can `rm -rf /worksite` → **deletes host files**. Use a git worktree or a throwaway clone for high-risk tasks. |
 | Toolbox files | bind `:ro` default | None by default. `--allow-toolbox-edits` flips to `:rw` — only use for deliberate meta-work. |
 | `/home/harness` | named volume `simpleharness-home` | Can only corrupt its own state. Recovery: `docker compose down -v`. |
-| Network egress | Docker default bridge | Can exfiltrate code, hit internal services, call arbitrary APIs. Trade-off documented in [§12](#12-known-limitations-v01). |
+| Network egress | Docker default bridge | Can exfiltrate code, hit internal services, call arbitrary APIs. Trade-off documented in [§13](#13-known-limitations-v01). |
 | Claude API | via the above | Expected. Credentials live in the volume. |
 
 ### What the agent CANNOT reach
@@ -511,7 +511,7 @@ When `claude` starts returning auth errors inside the container, the user re-run
 
 ### Credentials-in-named-volume shadowing trap
 
-A baked-in binary at `~/.local/bin/claude` is copied into the volume **only on first volume creation**. If you later edit the Dockerfile to upgrade the `claude` version and `docker compose build`, the existing volume keeps the old binary. The `compose.yml` comment lists the fix: `docker compose down -v` before rebuilding. See [§12](#12-known-limitations-v01).
+A baked-in binary at `~/.local/bin/claude` is copied into the volume **only on first volume creation**. If you later edit the Dockerfile to upgrade the `claude` version and `docker compose build`, the existing volume keeps the old binary. The `compose.yml` comment lists the fix: `docker compose down -v` before rebuilding. See [§13](#13-known-limitations-v01).
 
 ---
 
@@ -614,7 +614,110 @@ docker volume ls | awk '/sh-[0-9a-f]+_simpleharness-home/ {print $2}' | xargs -r
 
 ---
 
-## 12. Known limitations (v0.1)
+## 12. Handling Claude Code CLI errors
+
+The harness runs unattended in the container. Transient CLI failures — usage limits, server overload, network blips — must not tear down the flow. Permanent failures must stop the task cleanly without burning retries. The proposed policy is **two new optional fields on `STATE.md`** plus **one classifier function** that inspects every failed `claude -p` session.
+
+### Two new STATE.md fields
+
+```yaml
+---
+status: active | blocked | done
+phase: <role>
+next_role: <role>
+blocked_reason: <string>
+retry_count: <int>            # bumps on transient failures; cleared on success
+retry_after: <ISO timestamp>  # watch loop skips the task while now < retry_after
+---
+```
+
+Both are optional. Present only while a task is in backoff or parked.
+
+### Three outcomes from a failed session
+
+| Outcome | Trigger | Set in STATE | Watch-loop effect |
+|---|---|---|---|
+| **Usage limit (reset known)** | Error names a reset time (hourly/daily quota hit) | `retry_after = <reset>` | Task parked until reset. `retry_count` is **not** bumped — quota waits aren't the agent's fault. |
+| **Transient** | 529 Overloaded, 503, rate-limit without a reset time, network/DNS/timeout | `retry_count += 1`, `retry_after = now + backoff[retry_count - 1]` | Parked briefly, resumed next tick. On `retry_count == 5`, escalate to `fatal`. |
+| **Fatal** | Auth expired (401), invalid model, corrupted state, anything non-zero without a parseable transient signal | `status = blocked`, `blocked_reason = <last stderr line>`, counters cleared | Task stops. User reads logs and intervenes. |
+
+**Backoff is a fixed list:** `[30, 60, 120, 240, 300]` seconds. Five hardcoded values, no exponential math, no jitter. Simpler than any formula and easier to reason about when tailing logs.
+
+### Detection
+
+Two inputs, both already available to the harness:
+
+1. **Exit code** from `spawn_claude()` at `harness.py:652-663`.
+2. **Stream-json error events** in the per-session `.jsonl` log the harness already writes (`{"type":"error", ...}`).
+
+A tiny pattern table maps recognized signals to an outcome. Rough shape:
+
+| Signal (case-insensitive, in stream-json error body or last stderr line) | Outcome |
+|---|---|
+| `usage limit.*reset.*<ISO>` (regex captures the timestamp) | `usage_limit` with captured reset |
+| `overloaded`, `\b529\b`, `\b503\b`, `rate.?limit`, `ECONNRESET`, `ETIMEDOUT`, `DNS`, `timeout` | `transient` |
+| `\b401\b`, `invalid api key`, `not authenticated`, `token expired` | `fatal` with reason `auth_expired — run claude login in container` |
+| Anything else, non-zero exit | `fatal` with the last stderr line as reason |
+
+Unknown signals default to `fatal` rather than `transient` — loud-stop beats silent-retry-forever.
+
+### Watch-loop change
+
+In `tick_once()`, **before** selecting a task to run:
+
+```
+for each active task:
+    if STATE.retry_after is set and now < STATE.retry_after:
+        skip this task this tick
+        (print once per transition: "[harness] parked <slug> until <retry_after>")
+```
+
+**After** a session exits:
+
+- **Success** → clear `retry_count` and `retry_after`, advance the role normally.
+- **`usage_limit`** → write `retry_after=<reset>`, leave `status=active`, do not advance.
+- **`transient`** → bump `retry_count`, write `retry_after=now+backoff[retry_count-1]`, leave `status=active`, do not advance. On `retry_count == 5`, convert to `fatal` (reason `transient_exhausted: <signal>`).
+- **`fatal`** → set `status=blocked`, write `blocked_reason`, clear counters.
+
+User intervention via `Ctrl+C` → `CORRECTION.md` implicitly clears the wait: the next tick consumes the correction regardless of `retry_after`, because the intervention path is higher-priority than the backoff gate.
+
+### Why this stays simple
+
+- **Two fields, no new file, no new process.** Backoff state lives in the same `STATE.md` the harness already owns.
+- **Restart-resilient by default.** Container stop/start mid-backoff → next tick re-reads `STATE.md`, sees `retry_after` in the future, waits. No in-memory timers to persist, no cron jobs.
+- **Fixed backoff list.** Five numbers. No formulas to tune, no tests to write beyond "does index lookup work".
+- **One classifier function** with one pattern table. Anything unrecognized becomes `fatal` — failure is the safe default.
+- **Parallel tasks don't interfere.** Each task has its own `STATE.md` → its own `retry_after`. Waiting on task A doesn't block task B.
+- **Multi-instance safe.** Two containers against two worksites have two separate STATE files. Zero coordination needed.
+
+### What the user sees in the container log
+
+```
+[harness] session failed: usage_limit — parked 003-refactor-auth until 2026-04-08T15:30:00Z
+[harness] idle sleep 30s ...
+[harness] retry_after passed — resuming 003-refactor-auth
+```
+
+```
+[harness] session failed: transient (retry 2/5) — parked 003-refactor-auth until 2026-04-08T14:47:12Z
+```
+
+```
+[harness] session failed: fatal — blocked 003-refactor-auth: auth_expired — run claude login in container
+```
+
+Log messages name the task slug so parallel instances tailing logs stay readable.
+
+### Out of scope for v0.1
+
+- Automatic re-login on `auth_expired` (browser OAuth has no headless path today).
+- Per-model or per-endpoint rate-limit differentiation — one `transient` bucket handles all.
+- Retry budgeting across tasks (each task has its own independent counter).
+- Circuit-breaker across the whole worksite (e.g. "5 tasks failed in a row → stop everything"). Add later if it becomes a real problem.
+
+---
+
+## 13. Known limitations (v0.1)
 
 | # | Limitation | Why it's deferred | Workaround |
 |---|---|---|---|
@@ -629,7 +732,7 @@ docker volume ls | awk '/sh-[0-9a-f]+_simpleharness-home/ {print $2}' | xargs -r
 
 ---
 
-## 13. Future extensions
+## 14. Future extensions
 
 - **Linux host support.** Add a gosu-based entrypoint that remaps the `harness` user to `$(id -u)`:`$(id -g)` from env vars passed by launch.sh, mirroring Paperclip's `docker-entrypoint.sh`.
 - **Egress allowlist.** `network_mode: bridge` + iptables rules restricting outbound to `api.anthropic.com`, `deb.debian.org`, `registry.npmjs.org`, and the target repo's known remotes. Useful for air-gapped work.
