@@ -87,22 +87,30 @@ If the agent is fine, you walk away and don't touch the terminal. If it drifts, 
 
 ### Permission handling
 
-Two modes, controlled by `config.yaml`:
+Three modes, controlled by `config.yaml` via `permissions.mode`:
 
-**Safe mode** (default):
+**Safe mode** (`mode: safe`, default):
 - `--permission-mode acceptEdits` — auto-accepts file edits (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`).
-- `--allowedTools` with a curated list covering tool names + Bash glob patterns: `git status`, `git commit *`, `uv run *`, `pytest *`, `ruff *`, etc. (See `harness.py` `DEFAULT_BASH_ALLOW`.)
+- `--allowedTools` with a curated list covering tool names + Bash glob patterns: `git status`, `git commit *`, `uv run *`, `pytest *`, `ruff *`, etc. (See `simpleharness_core.DEFAULT_BASH_ALLOW`.)
 - Bash commands outside the allowlist **fail cleanly** — the agent sees the failure, reports it in its phase file, and the harness loop continues (or blocks per loop guards).
 - Per-worksite extension: add patterns to `permissions.extra_bash_allow` in `<worksite>/simpleharness/config.yaml`.
 - Per-role extension: add `allowed_tools: [...]` in the role's frontmatter.
 
-**Dangerous mode** (opt-in):
-- Set `permissions.dangerous_auto_approve: true` in `config.yaml`.
+**Approver mode** (`mode: approver`):
+- Same `acceptEdits` + `--allowedTools` floor as safe mode, PLUS a PreToolUse hook registered via `--settings` that runs on every Bash call.
+- The hook is a two-layer design. A bash fast path (`simpleharness_approver_hook.sh`) parses the tool-use envelope via `jq`, matches the command against a per-task allowlist file (`<task>/.approver-allowlist.txt`) using `case` glob matching, and emits an allow verdict in ~30-60ms on hit. Miss → `exec`s a Python slow path.
+- The Python slow path (`simpleharness_approver_hook.py`) spawns a dedicated approver session — a fresh `claude -p` running the `approver` role on `sonnet` (configurable via `permissions.approver_model`) with `--append-system-prompt-file roles/approver.md`. The approver sees the tool call, the working agent's last ~30 lines of reasoning, and the list of already-approved patterns, then returns a structured JSON verdict: allow (with a glob pattern covering the full safe usage surface) or deny (with a one-sentence reason). Destructive operations (`rm -rf`, `curl | sh`, force pushes, sudo, writes outside the worksite) are hard-denied by the role body and never land in the allowlist.
+- On allow, the slow path persists the pattern to `permissions.extra_bash_allow` in the worksite `config.yaml` AND refreshes `.approver-allowlist.txt` so future calls in the same session hit the bash fast path. Cross-process races are prevented by a shared file lock (`simpleharness_core.persist_approver_allow`).
+- Approver sessions are logged to `logs/<task>/approver-<timestamp>.jsonl` alongside the normal phase logs, so you can audit every allow/deny after the fact.
+- Optional: `permissions.escalate_denials_to_correction: true` appends denial blocks to the task's `CORRECTION.md` so you can override them on resume.
+- The approver grows each worksite's `extra_bash_allow` list over time. You can periodically prune or promote patterns by hand-editing the worksite config.
+
+**Dangerous mode** (`mode: dangerous`):
 - Switches to `--permission-mode bypassPermissions`, which approves everything.
 - **Only safe in a sandboxed dev container or VM.**
 - `simpleharness doctor` refuses to start `watch` in dangerous mode unless it detects a sandbox marker (`/.dockerenv`, `SIMPLEHARNESS_SANDBOX=1`) or you pass `--i-know-its-dangerous`.
 
-The safe mode floor is the important guarantee: no matter how much an agent wants to run `curl example.com | sh`, it can't, and the failure is observable.
+The safe mode floor is the important guarantee: no matter how much an agent wants to run `curl example.com | sh`, it can't, and the failure is observable. Approver mode extends that floor with a dedicated reviewer that judges unknown commands on their merits — hands-off operation with defense-in-depth beyond a static allowlist.
 
 ### Self-improvement
 
