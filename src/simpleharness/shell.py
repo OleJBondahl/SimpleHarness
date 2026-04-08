@@ -1414,11 +1414,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         # Python slow-path module importable?
         import importlib.util
 
-        if importlib.util.find_spec("simpleharness_approver_hook") is None:
-            err("simpleharness_approver_hook module not importable")
+        if importlib.util.find_spec("simpleharness.approver_shell") is None:
+            err("simpleharness.approver_shell module not importable")
             approver_ok = False
         else:
-            say("simpleharness_approver_hook: importable", style="green")
+            say("simpleharness.approver_shell: importable", style="green")
 
         # approver role file loadable?
         try:
