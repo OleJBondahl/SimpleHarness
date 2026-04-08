@@ -31,6 +31,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from simpleharness_core import (
+    DEFAULT_BASH_ALLOW,
     Config,
     Role,
     load_config,
@@ -66,36 +67,6 @@ DEFAULT_TOOLS_ALLOW: list[str] = [
     "Grep",
     "NotebookEdit",
     "Agent",
-]
-
-# Default Bash command glob patterns that are allowed in safe mode. Each entry
-# is the content inside the `Bash(...)` wrapper that Claude Code uses for
-# permission rules. Users extend via config.yaml `permissions.extra_bash_allow`.
-DEFAULT_BASH_ALLOW: list[str] = [
-    "git status",
-    "git diff *",
-    "git log *",
-    "git add *",
-    "git commit *",
-    "git stash *",
-    "git restore *",
-    "git checkout *",
-    "git branch *",
-    "git show *",
-    "uv run *",
-    "uv sync",
-    "uv add *",
-    "npm run *",
-    "npm test *",
-    "pytest *",
-    "ruff *",
-    "ty *",
-    "python -m *",
-    "node *",
-    "ls *",
-    "cat *",
-    "* --version",
-    "* --help *",
 ]
 
 # Terminal styling
