@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from simpleharness.core import (
+    DEFAULT_BACKOFF_SCHEDULE,
     Config,
     Deliverable,
     DownstreamAction,
@@ -28,6 +29,7 @@ from simpleharness.core import (
     build_session_prompt,
     check_deliverables,
     classify_cli_error,
+    compute_backoff_delay,
     compute_post_session_state,
     deps_satisfied,
     format_task_dashboard,
@@ -1356,3 +1358,44 @@ def test_classify_usage_limit_priority_over_transient():
     """Usage limit with reset time should match usage_limit, not transient."""
     r = classify_cli_error(1, "Rate limit: usage limit reached. Reset at 2026-04-09T18:00:00Z")
     assert r.outcome == "usage_limit"
+
+
+# ── compute_backoff_delay ─────────────────────────────────────────────────────
+
+
+def test_backoff_delay_first_retry():
+    assert compute_backoff_delay(0) == 30
+
+
+def test_backoff_delay_second_retry():
+    assert compute_backoff_delay(1) == 60
+
+
+def test_backoff_delay_third_retry():
+    assert compute_backoff_delay(2) == 120
+
+
+def test_backoff_delay_fourth_retry():
+    assert compute_backoff_delay(3) == 240
+
+
+def test_backoff_delay_fifth_retry():
+    assert compute_backoff_delay(4) == 300
+
+
+def test_backoff_delay_exhausted():
+    assert compute_backoff_delay(5) is None
+
+
+def test_backoff_delay_way_past_exhausted():
+    assert compute_backoff_delay(99) is None
+
+
+def test_backoff_delay_custom_schedule():
+    assert compute_backoff_delay(0, schedule=(10, 20)) == 10
+    assert compute_backoff_delay(1, schedule=(10, 20)) == 20
+    assert compute_backoff_delay(2, schedule=(10, 20)) is None
+
+
+def test_default_backoff_schedule_values():
+    assert DEFAULT_BACKOFF_SCHEDULE == (30, 60, 120, 240, 300)

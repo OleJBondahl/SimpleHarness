@@ -1148,6 +1148,20 @@ _AUTH_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
 )
 
 
+DEFAULT_BACKOFF_SCHEDULE: tuple[int, ...] = (30, 60, 120, 240, 300)
+
+
+@deal.pure
+def compute_backoff_delay(
+    retry_count: int,
+    schedule: tuple[int, ...] = DEFAULT_BACKOFF_SCHEDULE,
+) -> int | None:
+    """Return the backoff delay in seconds for the given retry count, or None if exhausted."""
+    if retry_count >= len(schedule):
+        return None
+    return schedule[retry_count]
+
+
 @deal.pure
 def classify_cli_error(exit_code: int | None, error_text: str) -> ClassifyResult:
     """Classify a CLI error into usage_limit, transient, or fatal.
