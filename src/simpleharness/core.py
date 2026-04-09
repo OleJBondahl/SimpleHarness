@@ -560,6 +560,7 @@ def build_session_prompt(
     toolbox: Path,
     correction_text: str | None,
     phase_files: list[Path],
+    phase_previews: Mapping[str, str] | None = None,
 ) -> str:
     """Assemble the spatial-awareness preamble + phase instructions.
 
@@ -568,9 +569,22 @@ def build_session_prompt(
 
     ``phase_files`` is the pre-computed list of existing NN-*.md phase files —
     the shell caller performs that I/O via ``list_phase_files``.
+    ``phase_previews`` is an optional mapping from filename to preview text
+    (first 20 lines) so agents get immediate context without extra tool calls.
     """
     existing_files = [p.name for p in phase_files]
-    existing_section = "\n".join(f"- {name}" for name in existing_files) or "- (none yet)"
+    if not existing_files:
+        existing_section = "- (none yet)"
+    else:
+        previews = phase_previews or {}
+        lines = []
+        for name in existing_files:
+            preview = previews.get(name, "")
+            if preview:
+                lines.append(f"### {name}\n```\n{preview}\n```")
+            else:
+                lines.append(f"- {name}")
+        existing_section = "\n".join(lines)
 
     correction_block = ""
     if correction_text:

@@ -276,7 +276,20 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
 
     # 2. build and write prompt
     phase_files = list_phase_files(task.folder)
-    prompt = build_session_prompt(task, role, workflow, toolbox, correction, phase_files)
+    # Read first 20 lines of each phase file for context in the prompt
+    phase_previews: dict[str, str] = {}
+    for pf in phase_files:
+        try:
+            text = pf.read_text(encoding="utf-8")
+            preview_lines = text.splitlines()[:20]
+            if len(text.splitlines()) > 20:
+                preview_lines.append("... (truncated)")
+            phase_previews[pf.name] = "\n".join(preview_lines)
+        except OSError:
+            pass
+    prompt = build_session_prompt(
+        task, role, workflow, toolbox, correction, phase_files, phase_previews
+    )
     prompt_file = write_session_prompt_file(task, prompt)
 
     # 3. log paths

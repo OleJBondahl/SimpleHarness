@@ -591,6 +591,35 @@ def test_build_session_prompt_with_correction():
     assert "Fix the bug!" in prompt
 
 
+def test_build_session_prompt_with_phase_previews():
+    from simpleharness.core import Role
+
+    task = _task()
+    role = Role(name="developer", body="dev")
+    wf = _workflow()
+    phase_files = [Path("/task/00-kickoff.md"), Path("/task/01-brainstorm.md")]
+    previews = {
+        "00-kickoff.md": "# Kickoff\nTask is ready.",
+        "01-brainstorm.md": "# Brainstorm\nThree approaches considered.",
+    }
+    prompt = build_session_prompt(task, role, wf, Path("/toolbox"), None, phase_files, previews)
+    assert "00-kickoff.md" in prompt
+    assert "# Kickoff" in prompt
+    assert "Task is ready." in prompt
+    assert "Three approaches considered." in prompt
+
+
+def test_build_session_prompt_without_previews_still_works():
+    from simpleharness.core import Role
+
+    task = _task()
+    role = Role(name="developer", body="dev")
+    wf = _workflow()
+    phase_files = [Path("/task/00-kickoff.md")]
+    prompt = build_session_prompt(task, role, wf, Path("/toolbox"), None, phase_files)
+    assert "00-kickoff.md" in prompt
+
+
 # ── build_claude_cmd ──────────────────────────────────────────────────────────
 
 
