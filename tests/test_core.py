@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +11,7 @@ import pytest
 
 from simpleharness.core import (
     DEFAULT_BACKOFF_SCHEDULE,
+    ClassifyResult,
     Config,
     Deliverable,
     DownstreamAction,
@@ -1399,3 +1400,154 @@ def test_backoff_delay_custom_schedule():
 
 def test_default_backoff_schedule_values():
     assert DEFAULT_BACKOFF_SCHEDULE == (30, 60, 120, 240, 300)
+
+
+# ── compute_post_session_state retry logic ────────────────────────────────────
+
+_RETRY_NOW = datetime(2026, 4, 9, 15, 0, 0, tzinfo=UTC)
+
+
+def test_post_session_clears_retry_on_success():
+    state = _state(retry_count=3, retry_after="2026-04-09T14:00:00Z")
+    session = _session(completed=True, exit_code=0)
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=None,
+    )
+    assert new.retry_count == 0
+    assert new.retry_after is None
+
+
+def test_post_session_transient_bumps_retry():
+    state = _state(retry_count=0)
+    session = _session(completed=False, exit_code=1)
+    cr = ClassifyResult("transient", "matched transient pattern: overloaded")
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=cr,
+    )
+    assert new.retry_count == 1
+    assert new.retry_after is not None
+    assert new.status == "active"
+
+
+def test_post_session_transient_sets_correct_backoff():
+    state = _state(retry_count=2)  # 3rd retry → 120s delay
+    session = _session(completed=False, exit_code=1)
+    cr = ClassifyResult("transient", "503")
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=cr,
+    )
+    assert new.retry_count == 3
+    expected_after = (_RETRY_NOW + timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert new.retry_after == expected_after
+
+
+def test_post_session_transient_exhausted_blocks():
+    state = _state(retry_count=5)  # 6th retry → exhausted (schedule has 5 entries)
+    session = _session(completed=False, exit_code=1)
+    cr = ClassifyResult("transient", "overloaded")
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=cr,
+    )
+    assert new.status == "blocked"
+    assert "retries exhausted" in (new.blocked_reason or "")
+    assert new.retry_count == 6
+    assert new.retry_after is None
+
+
+def test_post_session_usage_limit_parks_task():
+    state = _state(retry_count=0)
+    session = _session(completed=False, exit_code=1)
+    cr = ClassifyResult("usage_limit", "usage limit hit", retry_after_iso="2026-04-09T17:00:00Z")
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=cr,
+    )
+    assert new.retry_after == "2026-04-09T17:00:00Z"
+    assert new.retry_count == 0  # not bumped for usage limits
+    assert new.status == "active"
+
+
+def test_post_session_fatal_blocks_task():
+    state = _state(retry_count=2)
+    session = _session(completed=False, exit_code=1)
+    cr = ClassifyResult("fatal", "auth_expired — run claude login in container")
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=cr,
+    )
+    assert new.status == "blocked"
+    assert "auth_expired" in (new.blocked_reason or "")
+    assert new.retry_count == 0
+    assert new.retry_after is None
+
+
+def test_post_session_no_classify_result_no_change():
+    """When classify_result is None and session didn't complete, retry fields unchanged."""
+    state = _state(retry_count=0)
+    session = _session(completed=False, exit_code=1)
+    new = compute_post_session_state(
+        state,
+        "dev",
+        session,
+        None,
+        0,
+        "pre",
+        "post",
+        _config(),
+        _RETRY_NOW,
+        classify_result=None,
+    )
+    assert new.retry_count == 0
+    assert new.retry_after is None

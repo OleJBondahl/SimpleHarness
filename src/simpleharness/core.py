@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -1065,6 +1065,8 @@ def compute_post_session_state(
     post_hash: str,
     config: Config,
     now: datetime,
+    *,
+    classify_result: ClassifyResult | None = None,
 ) -> State:
     """Pure: compute the new State after a session completes.
 
@@ -1112,6 +1114,44 @@ def compute_post_session_state(
                 f"{role_name} ran {new_state.consecutive_same_role} times in a row without progress"
             ),
         )
+
+    # ── retry / backoff logic ────────────────────────────────────────────────
+    if session.completed:
+        # success → clear retry state
+        new_state = replace(new_state, retry_count=0, retry_after=None)
+    elif classify_result is not None and not session.interrupted:
+        match classify_result.outcome:
+            case "fatal":
+                new_state = replace(
+                    new_state,
+                    status="blocked",
+                    blocked_reason=classify_result.reason,
+                    retry_count=0,
+                    retry_after=None,
+                )
+            case "usage_limit":
+                new_state = replace(
+                    new_state,
+                    retry_after=classify_result.retry_after_iso,
+                )
+            case "transient":
+                new_retry = state.retry_count + 1
+                delay = compute_backoff_delay(new_retry - 1)
+                if delay is None:
+                    new_state = replace(
+                        new_state,
+                        status="blocked",
+                        blocked_reason=f"transient retries exhausted ({new_retry})",
+                        retry_count=new_retry,
+                        retry_after=None,
+                    )
+                else:
+                    retry_at = (now + timedelta(seconds=delay)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    new_state = replace(
+                        new_state,
+                        retry_count=new_retry,
+                        retry_after=retry_at,
+                    )
 
     return new_state
 
