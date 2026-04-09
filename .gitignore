@@ -25,3 +25,6 @@ claude-tools/
 
 # Git worktrees for isolated development
 .worktrees/
+
+.superpowers/
+docs/superpowers/
