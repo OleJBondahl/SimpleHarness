@@ -1,195 +1,164 @@
 # SimpleHarness
 
-A lightweight Python harness that runs **baton-pass agent workflows** over the
-Claude Code CLI. Long, drifting sessions become short, focused role-phased
-sessions that pass state between each other via markdown files on disk. You
-start it in a worksite, walk away, and come back when it's done.
+```
+   ┌───────────────────────────────────────────────┐
+   │            S I M P L E H A R N E S S          │
+   │       Baton-pass agent harness for Claude Code │
+   └───────────────────────────────────────────────┘
 
-## Install
+   [your roles] ──▶ [your workflow] ──▶ [your rules]
+        │                                      │
+        └── fresh context · state on disk ─────┘
+```
+
+A lightweight harness that runs sequences of short, focused `claude -p` sessions instead of one long interactive session. Each session gets a fresh context window, a narrow role-specific prompt, and reads/writes state to disk. You define the roles, workflows, and rules.
+
+## Philosophy
+
+**Long Claude Code sessions degrade.** Context fills up, the model drifts from the spec, and you end up babysitting. SimpleHarness fixes this by splitting work into a baton-pass of short sessions — each with a clean context window, a single role, and a clear brief.
+
+**Thin wrapper, not a framework.** No SDK. No runtime. No external dependencies beyond Python and PyYAML. SimpleHarness is a loop that spawns `claude -p`, reads a STATE.md file, and decides what to do next. Roles are markdown files. Workflows are markdown files. Configuration is YAML. Everything is readable, editable, and replaceable.
+
+**Bring your own everything.** The seed roles (leader, brainstormer, planner, developer) are starting points. Write your own. Swap them out. Define workflows that match how you actually work — not how a framework thinks you should.
+
+**Run unattended.** Start it, walk away. Cost tracking, session caps, and no-progress detection keep things under control. Hit Ctrl+C to course-correct mid-flight — your correction gets injected into the next session's prompt. Deploy in a dev container for fully hands-off operation.
+
+**Context efficiency is the feature.** Every token matters when you're paying per session. Fresh context per role means no accumulated noise. Phase file previews give each session just enough history. The result: less drift, lower cost, better output.
+
+## Quick Start
 
 ```bash
-uv tool install -e C:/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness
+pip install simpleharness          # or: uv add simpleharness
+
+cd /your/project
+simpleharness init                  # creates simpleharness/ directory
+simpleharness new "add auth layer"  # creates a task
+simpleharness watch                 # runs the baton-pass loop
 ```
 
-`simpleharness` is now on your PATH from any directory.
+## How It Works
 
-For development on this repo, also run once:
+1. Scan `tasks/` for active tasks
+2. Determine next role from workflow or `STATE.next_role`
+3. Build prompt: preamble + TASK.md + phase history + corrections
+4. Spawn `claude -p` with role's system prompt
+5. Read updated STATE.md → advance or block
+6. Loop until done (idle at 30s heartbeat)
 
-```bash
-uvx pre-commit install   # enables ruff + ty pre-commit hook
-```
+Mid-flight steering: `Ctrl+C` during a session kills the child process, drops you into a correction prompt, saves to CORRECTION.md, and resumes on the next tick.
 
-## Quick start
+## Features
 
-```bash
-cd C:/your/project                        # any git repo
-simpleharness init                        # one-time, creates simpleharness/ folder
-simpleharness new "add a CHANGELOG entry for v0.2" --workflow=universal
-simpleharness watch                       # long-lived loop, passes the baton until done
-```
-
-Hit `Ctrl+C` during a session to steer: the harness kills the current session,
-prompts you in the terminal, and whatever you type (end with a blank line) is
-written to `CORRECTION.md` and injected into the next session's prompt.
-Press `Ctrl+C` a second time at the correction prompt to abort the harness.
-
-## What's happening
-
-1. `init` creates a `simpleharness/` folder in your worksite with `tasks/`,
-   `memory/`, and `logs/` subfolders.
-2. `new` scaffolds a task folder: `simpleharness/tasks/NNN-slug/` containing
-   `TASK.md` (your brief) and `STATE.md` (the harness pointer).
-3. `watch` runs a long-lived loop. On each tick it scans `tasks/` for any task
-   with `status=active`, picks the next active one, figures out which role
-   should run next (from the workflow file or `STATE.next_role`), and spawns a
-   headless `claude -p` subprocess with that role's system prompt.
-4. Each session writes its phase file (`00-kickoff.md`, `01-brainstorm.md`,
-   etc.), updates `STATE.md`, and commits any worksite changes it made.
-5. When the final role writes `FINAL.md` and sets `status=done`, the harness
-   moves on to the next active task — or goes idle if there are none.
-
-## TASK.md schema
-
-Each task's `TASK.md` supports a rich frontmatter + body schema:
-
-```yaml
----
-title: "Human-readable title"
-workflow: feature-build
-worksite: .
-depends_on: [001-prerequisite-slug]    # hard prerequisites (must be done first)
-deliverables:                          # files this task produces
-  - path: docs/report.md
-    description: "Decision report"
-refine_on_deps_complete: false         # true = upstream may auto-refine this brief
-references:                            # authoritative input docs
-  - docs/architecture.md
----
-```
-
-**Body sections**: `# Goal`, `## Success criteria` (checklist), `## Boundaries`
-(scope guardrails), `## Autonomy` (pre-authorized vs must-block decisions),
-`## Handoff` (what downstream tasks consume), `## Notes`.
-
-The harness enforces dependencies: a task won't start until all `depends_on` slugs
-are `done`. When a task completes, downstream tasks are either left active for
-auto-refinement or blocked for user re-briefing, depending on `refine_on_deps_complete`.
-
-Use the `simpleharness-task` Claude Code skill to walk through authoring tasks
-interactively.
-
-## Toolbox vs Worksite
-
-SimpleHarness uses a two-repo split:
-
-- **Toolbox** (this repo): holds the harness source, `src/simpleharness/roles/*.md`, `src/simpleharness/workflows/*.md`,
-  and `src/simpleharness/config.yaml`. Installed once globally. Contains the "brain".
-- **Worksite**: any git repo you `cd` into and run `simpleharness` from. All
-  task state, logs, memory, and corrections live inside that worksite's own
-  `simpleharness/` folder. Running multiple worksites is safe — each has its
-  own state.
-
-The project-leader role is allowed to edit files in the toolbox so it can
-improve its own role/workflow definitions over time. If you're running multiple
-SimpleHarness instances concurrently, only instruct one of them to do
-toolbox-level work at a time to avoid commit conflicts.
+| Feature | What it does |
+|---|---|
+| **Baton-pass sessions** | Fresh context per role. No bloat accumulation. |
+| **Custom roles** | Markdown files. Write your own or use the seeds. |
+| **Custom workflows** | Define phase sequences. `universal` or `feature-build` included. |
+| **Approver hook** | Three permission modes: `safe`, `approver`, `dangerous`. |
+| **Cost tracking** | Per-session and per-task USD cost + duration. |
+| **Task dependencies** | `depends_on`, deliverables with `min_lines` verification. |
+| **Pause / resume** | `.PAUSE` signal file or CLI commands. |
+| **Mid-flight steering** | Ctrl+C → correction prompt → injected next session. |
+| **Rich dashboard** | `simpleharness status` — progress, cost, blocked reasons. |
+| **Dev container ready** | Unattended runs with sandbox detection. |
 
 ## Commands
 
-- `simpleharness watch` — long-lived loop (primary mode)
-- `simpleharness watch --once` — single tick, useful for debugging
-- `simpleharness new "<title>" --workflow=<name>` — scaffold a new task
-- `simpleharness init` — create `simpleharness/` folder layout in current dir
-- `simpleharness status` — list active tasks + their current phase
-- `simpleharness list` — list all tasks (active + done)
-- `simpleharness show <task-slug>` — summarize a task folder
-- `simpleharness doctor` — sanity checks (claude on PATH, toolbox reachable, etc.)
-- `simpleharness --version`
+| Command | Description |
+|---|---|
+| `simpleharness init` | Scaffold a worksite in the current project |
+| `simpleharness new "description"` | Create a new task |
+| `simpleharness watch` | Run the main loop |
+| `simpleharness status` | Rich dashboard of all tasks |
+| `simpleharness list` | List tasks |
+| `simpleharness show <slug>` | Show task details |
+| `simpleharness pause` | Pause the harness |
+| `simpleharness resume` | Resume after pause |
+| `simpleharness doctor` | Verify environment and permissions |
 
 ## Configuration
 
-Defaults live in `src/simpleharness/config.yaml`. Per-worksite overrides
-go in `<worksite>/simpleharness/config.yaml` (only the fields you want to
-change; the rest fall through).
+Edit `simpleharness/config.yaml` in your worksite:
 
-Key fields:
-
-- `model: opus` — base model for all roles
-- `idle_sleep_seconds: 30` — heartbeat idle cadence
-- `max_sessions_per_task: 20` — hard cap per task
-- `permissions.dangerous_auto_approve: false` — safe default
-
-## Permissions: safe vs dangerous mode
-
-By default (**safe mode**), the harness passes `--permission-mode acceptEdits`
-plus a curated `--allowedTools` list covering file edits, reads, git, uv, npm,
-pytest, ruff, and a few other safe patterns. Bash commands outside the
-allowlist **fail cleanly** — the agent sees the failure and reports it in its
-phase file.
-
-Set `permissions.dangerous_auto_approve: true` in `config.yaml` to switch to
-`--permission-mode bypassPermissions`, which approves everything. **Only do
-this in a dev container, VM, or disposable WSL** — `simpleharness doctor`
-will refuse to start `watch` unless it detects a sandbox marker (`/.dockerenv`
-or the `SIMPLEHARNESS_SANDBOX=1` env var), or you pass
-`--i-know-its-dangerous`.
-
-To extend the allowlist without going dangerous, add patterns to
-`permissions.extra_bash_allow` in `config.yaml`.
-
-## Directory layout
-
-### Toolbox (this repo)
-
-```
-SimpleHarness/
-├── pyproject.toml                    # uv-managed, Python 3.13
-├── README.md                         # this file
-├── docs/
-│   ├── intent.md                     # the original vision
-│   ├── dev-container.md
-│   └── skills-for-simpleharness-workflow.md
-├── src/simpleharness/
-│   ├── core.py, shell.py, approver_core.py, approver_shell.py
-│   ├── config.yaml                   # toolbox defaults
-│   ├── simpleharness_approver_hook.sh
-│   ├── roles/                        # role definitions (markdown)
-│   │   ├── project-leader.md
-│   │   ├── brainstormer.md
-│   │   ├── plan-writer.md
-│   │   └── developer.md
-│   ├── subagents/                    # subagent definitions (Claude Code .claude/agents format)
-│   │   └── expert-critic.md
-│   └── workflows/
-│       ├── universal.md
-│       └── feature-build.md
-└── .claude/
-    └── settings.json                 # permissions allowlist for interactive debug
+```yaml
+model: claude-sonnet-4-20250514
+idle_sleep: 30
+session_cap: 20
+permissions: safe              # safe | approver | dangerous
+skills:
+  - python-coding-and-tooling
 ```
 
-### Worksite runtime folder (per project)
+## Permissions
+
+- **`safe`** (default) — `--permission-mode acceptEdits` + curated Bash allowlist
+- **`approver`** — two-layer hook: fast Bash pattern match → Sonnet approver session on cache miss
+- **`dangerous`** — `bypassPermissions`, dev containers only (`doctor` enforces sandbox)
+
+## Architecture
 
 ```
-<your-worksite>/
-├── (your code / project files)
-└── simpleharness/
-    ├── config.yaml                   # optional per-worksite overrides
-    ├── tasks/
-    │   └── 001-example-task/
-    │       ├── TASK.md               # you write this
-    │       ├── STATE.md              # harness pointer
-    │       ├── 00-kickoff.md         # project-leader's notes
-    │       ├── 01-brainstorm.md
-    │       ├── ... (phase files)
-    │       └── FINAL.md              # written by last role
-    ├── memory/
-    │   └── WORKSITE.md               # long-term notes
-    └── logs/
-        └── 001-example-task/
-            └── 00-project-leader.jsonl
+your-project/
+├── simpleharness/           # worksite (created by init)
+│   ├── config.yaml
+│   ├── tasks/
+│   │   └── add-auth-layer/
+│   │       ├── TASK.md
+│   │       ├── STATE.md
+│   │       └── phases/
+│   └── .approver-allowlist.txt
+│
+~/.simpleharness/            # toolbox (shared across projects)
+├── roles/
+│   ├── project-leader.md
+│   ├── brainstormer.md
+│   ├── plan-writer.md
+│   └── developer.md
+├── workflows/
+│   ├── universal.md
+│   └── feature-build.md
+└── config.yaml
 ```
 
-## Status
+## Writing Custom Roles
 
-v0.1 MVP — single-tick `watch --once`, init, new, minimal role library.
-See `docs/` or the plan file for the full roadmap.
+A role is a markdown file in `roles/`. It becomes the system prompt for that session.
+
+```markdown
+# roles/my-reviewer.md
+---
+name: reviewer
+model: claude-sonnet-4-20250514
+---
+
+You are a code reviewer. Review the changes described in TASK.md.
+Focus on: security, correctness, test coverage.
+Write your findings to phases/review.md.
+```
+
+## Writing Custom Workflows
+
+A workflow defines the sequence of roles:
+
+```markdown
+# workflows/review-cycle.md
+---
+name: review-cycle
+phases:
+  - developer
+  - reviewer
+  - developer
+---
+```
+
+## Requirements
+
+- Python ≥ 3.13
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
+- No API keys.
+
+See [docs/usage.md](docs/usage.md) for detailed usage reference, TASK.md schema, and directory layout.
+
+## License
+
+MIT
