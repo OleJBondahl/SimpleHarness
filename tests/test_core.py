@@ -54,6 +54,7 @@ def _state(
     consecutive_same_role: int = 0,
     no_progress_ticks: int = 0,
     blocked_reason: str | None = None,
+    total_cost_usd: float = 0.0,
 ) -> State:
     return State(
         task_slug=slug,
@@ -72,6 +73,7 @@ def _state(
         created="2024-01-01T00:00:00Z",
         updated="2024-01-01T00:00:00Z",
         last_session_id=None,
+        total_cost_usd=total_cost_usd,
     )
 
 
@@ -112,13 +114,19 @@ def _session(
     completed: bool = True,
     interrupted: bool = False,
     session_id: str = "sess-abc",
+    result_text: str | None = None,
+    exit_code: int = 0,
+    cost_usd: float | None = None,
+    duration_ms: int | None = None,
 ) -> SessionResult:
     return SessionResult(
         completed=completed,
         interrupted=interrupted,
         session_id=session_id,
-        result_text=None,
-        exit_code=0,
+        result_text=result_text,
+        exit_code=exit_code,
+        cost_usd=cost_usd,
+        duration_ms=duration_ms,
     )
 
 
@@ -384,6 +392,20 @@ def test_compute_post_session_output_is_frozen():
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         cast(Any, new).status = "done"
+
+
+def test_compute_post_session_state_accumulates_cost():
+    state = _state(total_cost_usd=1.50)
+    session = _session(cost_usd=0.75)
+    new = compute_post_session_state(state, "dev", session, None, 0, "pre", "post", _config(), _NOW)
+    assert new.total_cost_usd == pytest.approx(2.25)
+
+
+def test_compute_post_session_state_none_cost():
+    state = _state(total_cost_usd=1.00)
+    session = _session(cost_usd=None)
+    new = compute_post_session_state(state, "dev", session, None, 0, "pre", "post", _config(), _NOW)
+    assert new.total_cost_usd == pytest.approx(1.00)
 
 
 # ── pick_next_task ────────────────────────────────────────────────────────────

@@ -313,6 +313,7 @@ class State:
     created: str = ""
     updated: str = ""
     last_session_id: str | None = None
+    total_cost_usd: float = 0.0
     # anti-stall
     no_progress_ticks: int = 0
     # human-facing
@@ -338,6 +339,8 @@ class SessionResult:
     session_id: str | None
     result_text: str | None
     exit_code: int | None
+    cost_usd: float | None = None
+    duration_ms: int | None = None
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1044,6 +1047,7 @@ def compute_post_session_state(
         updated=updated_iso,
         consecutive_same_role=new_consecutive,
         no_progress_ticks=new_no_progress,
+        total_cost_usd=state.total_cost_usd + (session.cost_usd or 0.0),
     )
 
     # loop guards (evaluated after incrementing counters)

@@ -173,10 +173,12 @@ def stream_and_log(
     proc: subprocess.Popen[str],
     jsonl_log: Path,
     plain_log: Path,
-) -> tuple[str | None, str | None]:
-    """Read proc.stdout line-by-line, pretty-print + log, return (session_id, result_text)."""
+) -> tuple[str | None, str | None, float | None, int | None]:
+    """Read proc.stdout line-by-line, pretty-print + log, return (session_id, result_text, cost_usd, duration_ms)."""
     session_id: str | None = None
     result_text: str | None = None
+    total_cost: float | None = None
+    total_duration: int | None = None
     jsonl_log.parent.mkdir(parents=True, exist_ok=True)
     with (
         jsonl_log.open("w", encoding="utf-8") as jf,
@@ -204,6 +206,12 @@ def stream_and_log(
                 elif event.get("type") == "result":
                     session_id = event.get("session_id") or session_id
                     result_text = event.get("result")
+                    cost = event.get("total_cost_usd")
+                    if isinstance(cost, (int, float)):
+                        total_cost = float(cost)
+                    duration = event.get("duration_ms")
+                    if isinstance(duration, int):
+                        total_duration = duration
             if isinstance(event, dict):
                 etype = event.get("type")
                 if etype == "assistant":
@@ -227,7 +235,7 @@ def stream_and_log(
                             pf.write(f"  {marker} {str(content)[:800]}\n")
             pf.flush()
             _pretty_event(event if isinstance(event, dict) else {"type": "unknown"})
-    return session_id, result_text
+    return session_id, result_text, total_cost, total_duration
 
 
 class InterventionState:
@@ -361,8 +369,12 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     interrupted = False
     result_session_id: str | None = None
     result_text: str | None = None
+    cost_usd: float | None = None
+    duration_ms: int | None = None
     try:
-        result_session_id, result_text = stream_and_log(proc, jsonl_log, plain_log)
+        result_session_id, result_text, cost_usd, duration_ms = stream_and_log(
+            proc, jsonl_log, plain_log
+        )
         proc.wait()
     except KeyboardInterrupt:
         interrupted = True
@@ -390,4 +402,6 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
         session_id=result_session_id or session_id,
         result_text=result_text,
         exit_code=exit_code,
+        cost_usd=cost_usd,
+        duration_ms=duration_ms,
     )

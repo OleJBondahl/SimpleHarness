@@ -470,6 +470,7 @@ _STATE_FIELD_ORDER = [
     "created",
     "updated",
     "last_session_id",
+    "total_cost_usd",
     "no_progress_ticks",
     "blocked_reason",
     "consecutive_same_role",
