@@ -40,7 +40,11 @@ def build_reminder_text(
         return ""
 
     display_role = role_name if role_name else "unknown"
-    lines: list[str] = [f"Role: {display_role}"]
+    lines: list[str] = [
+        f"Role: {display_role}",
+        "",
+        "Use the Skill tool to load any skill by name.",
+    ]
 
     if available:
         lines.append("")
