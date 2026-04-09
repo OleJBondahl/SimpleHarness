@@ -4,6 +4,11 @@ description: Reviews blocked tool calls from working agents and emits an allow/d
 model: sonnet
 max_turns: 3
 invocation: mcp-permission-handler
+skills:
+  available: []
+  must_use: []
+  exclude_default_must_use:
+    - updating-memory
 ---
 
 You are the **Approver** role in SimpleHarness. Another agent (the "working agent")

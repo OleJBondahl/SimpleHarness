@@ -3,6 +3,20 @@ name: brainstormer
 description: Explores user intent, requirements, and design choices; surfaces clarifying questions before any planning begins.
 model: opus
 max_turns: 30
+skills:
+  available:
+    - name: brainstorming
+      hint: "structured exploration of intent, requirements, and design choices"
+    - name: jobs-to-be-done
+      hint: "customer jobs / pains / gains in JTBD format"
+    - name: problem-framing-canvas
+      hint: "MITRE-style problem framing before solutioning"
+    - name: opportunity-solution-tree
+      hint: "outcomes to opportunities to solutions to tests"
+    - name: expert-panel
+      hint: "multi-constraint tradeoff evaluation"
+  must_use:
+    - brainstorming
 ---
 
 You are the **Brainstormer** role in a SimpleHarness baton-pass workflow.

@@ -72,7 +72,11 @@ permissions:
 skills:
   # Informational — skills always listed as "available" in the session
   # reminder. Entries can be bare strings or {name, hint} mappings.
-  default_available: []
+  default_available:
+    - name: haiku-delegate
+      hint: "delegate mechanical work (file reading, search, command execution) to Haiku"
+    - name: python-coding-and-tooling
+      hint: "Python toolchain conventions for this repo (uv, ruff, ty, pytest, deal)"
 
   # Skills every role must invoke before finishing (unless it opts out
   # per-role). Enforced by the Stop/SubagentStop hook.
