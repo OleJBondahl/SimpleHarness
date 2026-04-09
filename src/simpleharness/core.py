@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -143,17 +145,17 @@ def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, A
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(frozen=True)
 class Workflow:
     name: str
-    phases: list[str]
+    phases: tuple[str, ...]
     max_sessions: int | None = None
     idle_sleep_seconds: int | None = None
     description: str = ""
     source_path: Path | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class State:
     # identity
     task_slug: str
@@ -179,7 +181,7 @@ class State:
     consecutive_same_role: int = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class Task:
     slug: str
     folder: Path
@@ -188,7 +190,7 @@ class Task:
     state: State
 
 
-@dataclass
+@dataclass(frozen=True)
 class SessionResult:
     completed: bool  # true if claude exited naturally
     interrupted: bool  # true if user Ctrl+C'd
@@ -436,3 +438,151 @@ def _slugify(text: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9\s-]", "", text).strip().lower()
     s = re.sub(r"[\s_-]+", "-", s)
     return s[:60] or "task"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Functional-core: tick planner
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TickPlan:
+    kind: Literal["no_tasks", "no_active", "block", "run"]
+    block_task_slug: str | None = None
+    block_reason: str | None = None
+    run_task_slug: str | None = None
+    run_role_name: str | None = None
+
+
+def plan_tick(
+    tasks: tuple[Task, ...],
+    workflows_by_name: Mapping[str, Workflow | None],
+    corrections: frozenset[str],
+    config: Config,
+) -> TickPlan:
+    """Pure planner: given tasks, workflows, corrections, config → TickPlan.
+
+    Covers all cases the old tick_once handled:
+      - no_tasks: task list is empty
+      - no_active: no active tasks
+      - block: session cap exceeded, workflow load failure, no phases,
+               correction pending but no role, etc.
+      - run: a role was determined and is ready to execute
+    """
+    if not tasks:
+        return TickPlan(kind="no_tasks")
+
+    task = pick_next_task(list(tasks), corrections)
+    if task is None:
+        return TickPlan(kind="no_active")
+
+    # session cap check before spending
+    if task.state.total_sessions >= task.state.session_cap:
+        return TickPlan(
+            kind="block",
+            block_task_slug=task.slug,
+            block_reason=f"session cap reached ({task.state.session_cap})",
+        )
+
+    # workflow load failure
+    workflow = workflows_by_name.get(task.state.workflow)
+    if workflow is None:
+        return TickPlan(
+            kind="block",
+            block_task_slug=task.slug,
+            block_reason=f"workflow load failed: {task.state.workflow!r}",
+        )
+
+    # determine next role
+    correction_pending = task.slug in corrections
+    if correction_pending:
+        next_role_name = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+        if next_role_name is None:
+            return TickPlan(
+                kind="block",
+                block_task_slug=task.slug,
+                block_reason="correction pending but workflow has no phases",
+            )
+    else:
+        next_role_name = resolve_next_role(task, workflow)
+        if next_role_name is None:
+            # past final phase — loop back
+            fallback = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+            if fallback is None:
+                return TickPlan(
+                    kind="block",
+                    block_task_slug=task.slug,
+                    block_reason="workflow has no phases",
+                )
+            next_role_name = fallback
+
+    return TickPlan(
+        kind="run",
+        run_task_slug=task.slug,
+        run_role_name=next_role_name,
+    )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Functional-core: post-session state computation
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def compute_post_session_state(
+    state: State,
+    role_name: str,
+    session: SessionResult,
+    prev_last_role: str | None,
+    prev_consecutive_same_role: int,
+    pre_hash: str,
+    post_hash: str,
+    config: Config,
+    now: datetime,
+) -> State:
+    """Pure: compute the new State after a session completes.
+
+    Absorbs the logic that was split between apply_session_bookkeeping and
+    the no-progress counter block at the tail of tick_once.
+
+    ``state`` is the agent-edited state re-read from disk after the session.
+    ``prev_last_role`` / ``prev_consecutive_same_role`` are from the pre-session
+    snapshot (before the agent ran), so consecutive-same-role counting compares
+    correctly against what the harness previously recorded.
+    ``pre_hash`` / ``post_hash`` are SHA-256 digests of STATE.md before and
+    after the session (used for no-progress detection).
+    """
+    # consecutive same-role counter
+    new_consecutive = prev_consecutive_same_role + 1 if prev_last_role == role_name else 1
+
+    # no-progress detection
+    new_no_progress = state.no_progress_ticks + 1 if post_hash == pre_hash else 0
+
+    updated_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    new_state = replace(
+        state,
+        total_sessions=state.total_sessions + 1,
+        last_role=role_name,
+        last_session_id=session.session_id,
+        updated=updated_iso,
+        consecutive_same_role=new_consecutive,
+        no_progress_ticks=new_no_progress,
+    )
+
+    # loop guards (evaluated after incrementing counters)
+    if new_state.total_sessions >= new_state.session_cap:
+        new_state = replace(
+            new_state,
+            status="blocked",
+            blocked_reason=f"session cap reached ({new_state.session_cap})",
+        )
+    elif new_state.consecutive_same_role >= config.max_same_role_repeats:
+        new_state = replace(
+            new_state,
+            status="blocked",
+            blocked_reason=(
+                f"{role_name} ran {new_state.consecutive_same_role} times in a row without progress"
+            ),
+        )
+
+    return new_state

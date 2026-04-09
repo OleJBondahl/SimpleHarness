@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,8 @@ from simpleharness.core import (
     _slugify,
     build_claude_cmd,
     build_session_prompt,
-    pick_next_task,
+    compute_post_session_state,
+    plan_tick,
     resolve_next_role,
     toolbox_root,
     worksite_sh_dir,
@@ -461,12 +463,12 @@ def load_workflow(name: str) -> Workflow:
     if not path.exists():
         raise FileNotFoundError(f"workflow '{name}' not found at {path}")
     meta, body = read_frontmatter_file(path)
-    phases = meta.get("phases") or []
-    if not isinstance(phases, list) or not all(isinstance(p, str) for p in phases):
+    phases_raw = meta.get("phases") or []
+    if not isinstance(phases_raw, list) or not all(isinstance(p, str) for p in phases_raw):
         raise ValueError(f"workflow '{name}': phases must be a list of role-name strings")
     return Workflow(
         name=str(meta.get("name", name)),
-        phases=phases,
+        phases=tuple(phases_raw),
         max_sessions=meta.get("max_sessions"),
         idle_sleep_seconds=meta.get("idle_sleep_seconds"),
         description=body.strip(),
@@ -1017,157 +1019,130 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def apply_session_bookkeeping(
-    task: Task, role_name: str, session: SessionResult, config: Config
-) -> None:
-    """Update STATE.md fields the harness owns after a session.
+def _try_load_workflow(name: str) -> Workflow | None:
+    """Load a workflow by name; return None on any error."""
+    try:
+        return load_workflow(name)
+    except (FileNotFoundError, ValueError):
+        return None
 
-    Re-reads STATE from disk because the agent may have edited it mid-session.
-    """
-    state = read_state(task.state_path)
-    state.total_sessions += 1
-    state.last_role = role_name
-    state.last_session_id = session.session_id
-    state.updated = now_iso()
-    # consecutive same-role counter
-    if task.state.last_role == role_name:
-        state.consecutive_same_role = task.state.consecutive_same_role + 1
-    else:
-        state.consecutive_same_role = 1
-    # loop guards
-    if state.total_sessions >= state.session_cap:
-        state.status = "blocked"
-        state.blocked_reason = f"session cap reached ({state.session_cap})"
-    elif state.consecutive_same_role >= config.max_same_role_repeats:
-        state.status = "blocked"
-        state.blocked_reason = (
-            f"{role_name} ran {state.consecutive_same_role} times in a row without progress"
-        )
-    # no-progress detection
-    # (we compute hash BEFORE any write_state, so capture now)
-    # handled by the caller since we need the pre-write hash; simplified here
-    write_state(task.state_path, state)
-    task.state = state
+
+def _task_by_slug(tasks: tuple[Task, ...], slug: str | None) -> Task:
+    """Return the Task matching slug. Raises ValueError if not found."""
+    for t in tasks:
+        if t.slug == slug:
+            return t
+    raise ValueError(f"task slug {slug!r} not found in task list")
 
 
 def tick_once(worksite: Path, config: Config) -> bool:
     """One iteration of the loop. Returns True if we ran a session, False if idle."""
-    tasks = discover_tasks(worksite)
-    if not tasks:
-        say("no tasks in simpleharness/tasks/", style="dim")
-        return False
-
+    tasks = tuple(discover_tasks(worksite))
     corrections = frozenset(t.slug for t in tasks if (t.folder / "CORRECTION.md").exists())
-    task = pick_next_task(tasks, corrections)
-    if task is None:
-        say("no active tasks", style="dim")
-        return False
+    workflows_by_name: dict[str, Workflow | None] = {
+        t.state.workflow: _try_load_workflow(t.state.workflow) for t in tasks
+    }
+    plan = plan_tick(tasks, workflows_by_name, corrections, config)
 
-    # load the workflow
-    try:
-        workflow = load_workflow(task.state.workflow)
-    except (FileNotFoundError, ValueError) as e:
-        err(f"task {task.slug}: {e}")
-        task.state.status = "blocked"
-        task.state.blocked_reason = f"workflow load failed: {e}"
-        write_state(task.state_path, task.state)
-        return False
-
-    # session cap check before spending
-    if task.state.total_sessions >= task.state.session_cap:
-        warn(f"task {task.slug}: session cap reached ({task.state.session_cap}), blocking")
-        task.state.status = "blocked"
-        task.state.blocked_reason = f"session cap reached ({task.state.session_cap})"
-        write_state(task.state_path, task.state)
-        return False
-
-    # decide next role
-    #
-    # Two special cases override the normal workflow-advance logic:
-    #
-    # 1. A CORRECTION.md on disk means the user is actively steering. Re-run
-    #    whoever last ran (or phase[0] if nobody has) so the correction is
-    #    consumed on this tick, regardless of whether workflow-advance would
-    #    otherwise say "past final phase".
-    #
-    # 2. When no correction is present but resolve_next_role returns None
-    #    (past the final phase, status still active), loop back to the last
-    #    role instead of hard-blocking. The session_cap, max_same_role_repeats,
-    #    and no_progress_tick_threshold guards are the real safety nets for
-    #    genuinely stuck tasks.
-    correction_pending = (task.folder / "CORRECTION.md").exists()
-    if correction_pending:
-        next_role_name = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
-        if next_role_name is None:
-            err(f"task {task.slug}: correction pending but no role to run")
-            task.state.status = "blocked"
-            task.state.blocked_reason = "correction pending but workflow has no phases"
-            write_state(task.state_path, task.state)
+    match plan.kind:
+        case "no_tasks":
+            say("no tasks in simpleharness/tasks/", style="dim")
             return False
-        say(
-            f"task {task.slug}: CORRECTION.md present — re-running {next_role_name}",
-            style="yellow",
-        )
-    else:
-        next_role_name = resolve_next_role(task, workflow)
-        if next_role_name is None:
-            fallback = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
-            if fallback is None:
-                err(f"task {task.slug}: no role to run and no phases in workflow")
-                task.state.status = "blocked"
-                task.state.blocked_reason = "workflow has no phases"
-                write_state(task.state_path, task.state)
+        case "no_active":
+            say("no active tasks", style="dim")
+            return False
+        case "block":
+            task = _task_by_slug(tasks, plan.block_task_slug)
+            err(f"task {task.slug}: {plan.block_reason}")
+            new_state = replace(task.state, status="blocked", blocked_reason=plan.block_reason)
+            write_state(task.state_path, new_state)
+            return False
+        case "run":
+            task = _task_by_slug(tasks, plan.run_task_slug)
+            role_name = plan.run_role_name
+            assert role_name is not None  # guaranteed by plan_tick
+
+            # log correction/loopback messages
+            correction_pending = task.slug in corrections
+            if correction_pending:
+                say(
+                    f"task {task.slug}: CORRECTION.md present — re-running {role_name}",
+                    style="yellow",
+                )
+            else:
+                workflow = workflows_by_name[task.state.workflow]
+                assert workflow is not None
+                resolved = resolve_next_role(task, workflow)
+                if resolved is None:
+                    say(
+                        f"task {task.slug}: past final phase, looping back to {role_name}",
+                        style="yellow",
+                    )
+
+            try:
+                role = load_role(role_name)
+            except (FileNotFoundError, ValueError) as e:
+                err(f"task {task.slug}: {e}")
+                new_state = replace(
+                    task.state, status="blocked", blocked_reason=f"role load failed: {e}"
+                )
+                write_state(task.state_path, new_state)
                 return False
-            next_role_name = fallback
-            say(
-                f"task {task.slug}: past final phase, looping back to {next_role_name}",
-                style="yellow",
+
+            # capture pre-state hash for no-progress detection
+            pre_hash = state_hash(task.state_path)
+
+            # clear any stale next_role override (consumed by this session)
+            if task.state.next_role:
+                cleared_state = replace(task.state, next_role=None)
+                write_state(task.state_path, cleared_state)
+
+            workflow = workflows_by_name[task.state.workflow]
+            assert workflow is not None
+
+            # save pre-session counters for compute_post_session_state
+            prev_last_role = task.state.last_role
+            prev_consecutive_same_role = task.state.consecutive_same_role
+
+            try:
+                session = run_session(task, role, workflow, config)
+            except KeyboardInterrupt:
+                say("aborted by user, exiting")
+                raise
+
+            post_hash = state_hash(task.state_path)
+            current_state = read_state(task.state_path)
+
+            if post_hash != pre_hash and current_state.no_progress_ticks > 0:
+                # progress detected — warn if no-progress was accumulating
+                pass  # compute_post_session_state resets the counter
+
+            new_state = compute_post_session_state(
+                current_state,
+                role.name,
+                session,
+                prev_last_role=prev_last_role,
+                prev_consecutive_same_role=prev_consecutive_same_role,
+                pre_hash=pre_hash,
+                post_hash=post_hash,
+                config=config,
+                now=datetime.now(UTC),
             )
 
-    try:
-        role = load_role(next_role_name)
-    except (FileNotFoundError, ValueError) as e:
-        err(f"task {task.slug}: {e}")
-        task.state.status = "blocked"
-        task.state.blocked_reason = f"role load failed: {e}"
-        write_state(task.state_path, task.state)
-        return False
+            if (
+                new_state.no_progress_ticks >= config.no_progress_tick_threshold
+                and new_state.no_progress_ticks > current_state.no_progress_ticks
+            ):
+                warn(f"task {task.slug}: no progress for {new_state.no_progress_ticks} ticks")
 
-    # record pre-state hash for no-progress detection
-    pre_hash = state_hash(task.state_path)
-
-    # clear any stale next_role override (it's consumed by this session)
-    if task.state.next_role:
-        task.state.next_role = None
-        write_state(task.state_path, task.state)
-
-    # run it
-    try:
-        session = run_session(task, role, workflow, config)
-    except KeyboardInterrupt:
-        say("aborted by user, exiting")
-        raise
-
-    # apply bookkeeping
-    apply_session_bookkeeping(task, role.name, session, config)
-
-    # re-read to check agent updates
-    post_state = read_state(task.state_path)
-    post_hash = state_hash(task.state_path)
-    if post_hash == pre_hash:
-        post_state.no_progress_ticks += 1
-        if post_state.no_progress_ticks >= config.no_progress_tick_threshold:
-            warn(f"task {task.slug}: no progress for {post_state.no_progress_ticks} ticks")
-        write_state(task.state_path, post_state)
-    else:
-        if post_state.no_progress_ticks != 0:
-            post_state.no_progress_ticks = 0
-            write_state(task.state_path, post_state)
-
-    say(
-        f"task {task.slug}: session complete  (status={post_state.status}, next_role={post_state.next_role or 'auto'})"
-    )
-    return True
+            write_state(task.state_path, new_state)
+            say(
+                f"task {task.slug}: session complete  "
+                f"(status={new_state.status}, next_role={new_state.next_role or 'auto'})"
+            )
+            return True
+        case _:
+            return False
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1341,10 +1316,8 @@ def cmd_unblock(args: argparse.Namespace) -> int:
         warn(f"task {target.slug} is {state.status}, not blocked — nothing to do")
         return 0
     prev = state.blocked_reason or "(none)"
-    state.status = "active"
-    state.blocked_reason = None
-    state.no_progress_ticks = 0
-    write_state(target.state_path, state)
+    new_state = replace(state, status="active", blocked_reason=None, no_progress_ticks=0)
+    write_state(target.state_path, new_state)
     say(f"unblocked {target.slug} (was: {prev})")
     return 0
 
