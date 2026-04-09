@@ -141,6 +141,7 @@ def _session(
 
 
 _NOW = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
+_FAR_PAST = datetime(2000, 1, 1, tzinfo=UTC)
 
 
 # ── Frozen dataclasses ────────────────────────────────────────────────────────
@@ -174,7 +175,7 @@ def test_session_result_is_frozen():
 
 
 def test_plan_tick_no_tasks():
-    plan = plan_tick((), {}, frozenset(), _config())
+    plan = plan_tick((), {}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "no_tasks"
 
 
@@ -183,13 +184,13 @@ def test_plan_tick_no_tasks():
 
 def test_plan_tick_no_active_all_done():
     t = _task(state=_state(status="done"))
-    plan = plan_tick((t,), {}, frozenset(), _config())
+    plan = plan_tick((t,), {}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "no_active"
 
 
 def test_plan_tick_no_active_all_blocked():
     t = _task(state=_state(status="blocked"))
-    plan = plan_tick((t,), {}, frozenset(), _config())
+    plan = plan_tick((t,), {}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "no_active"
 
 
@@ -199,7 +200,7 @@ def test_plan_tick_no_active_all_blocked():
 def test_plan_tick_session_cap_block():
     t = _task(state=_state(total_sessions=20, session_cap=20))
     wf = _workflow()
-    plan = plan_tick((t,), {"default": wf}, frozenset(), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "block"
     assert plan.block_task_slug == t.slug
     assert "session cap" in (plan.block_reason or "")
@@ -207,7 +208,7 @@ def test_plan_tick_session_cap_block():
 
 def test_plan_tick_workflow_missing_block():
     t = _task(state=_state(workflow="missing-wf"))
-    plan = plan_tick((t,), {"missing-wf": None}, frozenset(), _config())
+    plan = plan_tick((t,), {"missing-wf": None}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "block"
     assert plan.block_task_slug == t.slug
     assert "workflow load failed" in (plan.block_reason or "")
@@ -216,7 +217,7 @@ def test_plan_tick_workflow_missing_block():
 def test_plan_tick_correction_pending_no_phases_block():
     t = _task(state=_state(last_role=None))
     wf = _workflow(phases=())
-    plan = plan_tick((t,), {"default": wf}, frozenset({t.slug}), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset({t.slug}), _config(), _FAR_PAST)
     assert plan.kind == "block"
     assert "no phases" in (plan.block_reason or "")
 
@@ -224,7 +225,7 @@ def test_plan_tick_correction_pending_no_phases_block():
 def test_plan_tick_no_phases_no_correction_block():
     t = _task(state=_state(last_role=None))
     wf = _workflow(phases=())
-    plan = plan_tick((t,), {"default": wf}, frozenset(), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "block"
     assert "no phases" in (plan.block_reason or "")
 
@@ -235,7 +236,7 @@ def test_plan_tick_no_phases_no_correction_block():
 def test_plan_tick_normal_run():
     t = _task(state=_state(last_role=None))
     wf = _workflow(phases=("developer",))
-    plan = plan_tick((t,), {"default": wf}, frozenset(), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "run"
     assert plan.run_task_slug == t.slug
     assert plan.run_role_name == "developer"
@@ -244,7 +245,7 @@ def test_plan_tick_normal_run():
 def test_plan_tick_correction_pending_reruns_last_role():
     t = _task(state=_state(last_role="reviewer"))
     wf = _workflow(phases=("developer", "reviewer"))
-    plan = plan_tick((t,), {"default": wf}, frozenset({t.slug}), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset({t.slug}), _config(), _FAR_PAST)
     assert plan.kind == "run"
     assert plan.run_role_name == "reviewer"
 
@@ -252,7 +253,7 @@ def test_plan_tick_correction_pending_reruns_last_role():
 def test_plan_tick_correction_pending_no_last_role_uses_first_phase():
     t = _task(state=_state(last_role=None))
     wf = _workflow(phases=("developer", "reviewer"))
-    plan = plan_tick((t,), {"default": wf}, frozenset({t.slug}), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset({t.slug}), _config(), _FAR_PAST)
     assert plan.kind == "run"
     assert plan.run_role_name == "developer"
 
@@ -261,7 +262,7 @@ def test_plan_tick_past_final_phase_loopback():
     # last_role == final phase → resolve_next_role returns None → loopback
     t = _task(state=_state(last_role="reviewer"))
     wf = _workflow(phases=("developer", "reviewer"))
-    plan = plan_tick((t,), {"default": wf}, frozenset(), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "run"
     # loopback to last_role (reviewer) since no fallback uses last_role first
     assert plan.run_role_name == "reviewer"
@@ -270,7 +271,7 @@ def test_plan_tick_past_final_phase_loopback():
 def test_plan_tick_next_role_override_respected():
     t = _task(state=_state(next_role="project-leader"))
     wf = _workflow(phases=("developer",))
-    plan = plan_tick((t,), {"default": wf}, frozenset(), _config())
+    plan = plan_tick((t,), {"default": wf}, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "run"
     assert plan.run_role_name == "project-leader"
 
@@ -280,7 +281,7 @@ def test_plan_tick_priority_correction_over_alphabetical():
     t1 = _task(slug="002-beta", state=_state(slug="002-beta"))
     t2 = _task(slug="001-alpha", state=_state(slug="001-alpha"))
     wf = _workflow()
-    plan = plan_tick((t1, t2), {"default": wf}, frozenset({"002-beta"}), _config())
+    plan = plan_tick((t1, t2), {"default": wf}, frozenset({"002-beta"}), _config(), _FAR_PAST)
     assert plan.kind == "run"
     assert plan.run_task_slug == "002-beta"
 
@@ -422,18 +423,18 @@ def test_compute_post_session_state_none_cost():
 
 
 def test_pick_next_task_returns_none_if_empty():
-    assert pick_next_task([], frozenset()) is None
+    assert pick_next_task([], frozenset(), _FAR_PAST) is None
 
 
 def test_pick_next_task_returns_none_if_all_inactive():
     t = _task(state=_state(status="done"))
-    assert pick_next_task([t], frozenset()) is None
+    assert pick_next_task([t], frozenset(), _FAR_PAST) is None
 
 
 def test_pick_next_task_alphabetical():
     t1 = _task(slug="002-b")
     t2 = _task(slug="001-a")
-    result = pick_next_task([t1, t2], frozenset())
+    result = pick_next_task([t1, t2], frozenset(), _FAR_PAST)
     assert result is not None
     assert result.slug == "001-a"
 
@@ -441,7 +442,7 @@ def test_pick_next_task_alphabetical():
 def test_pick_next_task_correction_priority():
     t1 = _task(slug="001-a")
     t2 = _task(slug="002-b")
-    result = pick_next_task([t1, t2], frozenset({"002-b"}))
+    result = pick_next_task([t1, t2], frozenset({"002-b"}), _FAR_PAST)
     assert result is not None
     assert result.slug == "002-b"
 
@@ -1102,7 +1103,7 @@ def test_pick_next_task_skips_unmet_deps():
     spec_with_dep = TaskSpec(title="b", workflow="w", depends_on=("000-prereq",))
     t1 = _task(slug="001-blocked", spec=spec_with_dep)
     t2 = _task(slug="002-free")
-    result = pick_next_task([t1, t2], frozenset())
+    result = pick_next_task([t1, t2], frozenset(), _FAR_PAST)
     assert result is not None
     assert result.slug == "002-free"
 
@@ -1112,7 +1113,7 @@ def test_pick_next_task_allows_met_deps():
     spec_with_dep = TaskSpec(title="b", workflow="w", depends_on=("001-prereq",))
     t1 = _task(slug="001-prereq", state=_state(slug="001-prereq", status="done"))
     t2 = _task(slug="002-next", spec=spec_with_dep)
-    result = pick_next_task([t1, t2], frozenset())
+    result = pick_next_task([t1, t2], frozenset(), _FAR_PAST)
     assert result is not None
     assert result.slug == "002-next"
 
@@ -1120,7 +1121,7 @@ def test_pick_next_task_allows_met_deps():
 def test_pick_next_task_no_spec_treated_as_no_deps():
     """Tasks without a spec (old-style) are always eligible."""
     t = _task(slug="001-old", spec=None)
-    result = pick_next_task([t], frozenset())
+    result = pick_next_task([t], frozenset(), _FAR_PAST)
     assert result is not None
     assert result.slug == "001-old"
 
@@ -1128,7 +1129,7 @@ def test_pick_next_task_no_spec_treated_as_no_deps():
 def test_pick_next_task_returns_none_when_all_deps_unmet():
     spec = TaskSpec(title="a", workflow="w", depends_on=("000-missing",))
     t = _task(slug="001-waiting", spec=spec)
-    result = pick_next_task([t], frozenset())
+    result = pick_next_task([t], frozenset(), _FAR_PAST)
     assert result is None
 
 
@@ -1140,7 +1141,7 @@ def test_plan_tick_waiting_on_deps():
     spec = TaskSpec(title="a", workflow="w", depends_on=("000-prereq",))
     t = _task(slug="001-waiting", spec=spec)
     wf = {"w": _workflow(name="w")}
-    plan = plan_tick((t,), wf, frozenset(), _config())
+    plan = plan_tick((t,), wf, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "waiting_on_deps"
 
 
@@ -1148,7 +1149,7 @@ def test_plan_tick_no_active_when_truly_none():
     """Only done/blocked tasks → no_active (not waiting_on_deps)."""
     t = _task(slug="001-done", state=_state(slug="001-done", status="done"))
     wf = {"w": _workflow(name="w")}
-    plan = plan_tick((t,), wf, frozenset(), _config())
+    plan = plan_tick((t,), wf, frozenset(), _config(), _FAR_PAST)
     assert plan.kind == "no_active"
 
 
@@ -1551,3 +1552,54 @@ def test_post_session_no_classify_result_no_change():
     )
     assert new.retry_count == 0
     assert new.retry_after is None
+
+
+# ── pick_next_task backoff filtering ──────────────────────────────────────────
+
+_BACKOFF_NOW = datetime(2026, 4, 9, 15, 0, 0, tzinfo=UTC)
+
+
+def test_pick_next_task_skips_backoff():
+    """Task in backoff (retry_after in the future) is skipped."""
+    t = _task(state=_state(retry_after="2026-04-09T16:00:00Z"))
+    result = pick_next_task((t,), frozenset(), _BACKOFF_NOW)
+    assert result is None
+
+
+def test_pick_next_task_picks_past_backoff():
+    """Task whose retry_after is in the past is eligible."""
+    t = _task(state=_state(retry_after="2026-04-09T14:00:00Z"))
+    result = pick_next_task((t,), frozenset(), _BACKOFF_NOW)
+    assert result is not None
+    assert result.slug == "001-test"
+
+
+def test_pick_next_task_correction_overrides_backoff():
+    """Task with CORRECTION.md bypasses backoff filter."""
+    t = _task(slug="001-test", state=_state(slug="001-test", retry_after="2026-04-09T16:00:00Z"))
+    result = pick_next_task((t,), frozenset({"001-test"}), _BACKOFF_NOW)
+    assert result is not None
+    assert result.slug == "001-test"
+
+
+def test_pick_next_task_no_retry_after_is_eligible():
+    """Task with retry_after=None is always eligible."""
+    t = _task(state=_state(retry_after=None))
+    result = pick_next_task((t,), frozenset(), _BACKOFF_NOW)
+    assert result is not None
+
+
+# ── plan_tick all_backoff ─────────────────────────────────────────────────────
+
+
+def test_plan_tick_all_backoff():
+    t = _task(state=_state(retry_after="2026-04-09T16:00:00Z"))
+    plan = plan_tick((t,), {"default": _workflow()}, frozenset(), _config(), _BACKOFF_NOW)
+    assert plan.kind == "all_backoff"
+
+
+def test_plan_tick_run_with_now():
+    """plan_tick still produces 'run' when task is not in backoff."""
+    t = _task(state=_state(retry_after=None))
+    plan = plan_tick((t,), {"default": _workflow()}, frozenset(), _config(), _BACKOFF_NOW)
+    assert plan.kind == "run"

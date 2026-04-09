@@ -211,7 +211,7 @@ def tick_once(worksite: Path, config: Config) -> bool:
     workflows_by_name: dict[str, Workflow | None] = {
         t.state.workflow: _try_load_workflow(t.state.workflow) for t in tasks
     }
-    plan = plan_tick(tasks, workflows_by_name, corrections, config)
+    plan = plan_tick(tasks, workflows_by_name, corrections, config, datetime.now(UTC))
 
     match plan.kind:
         case "no_tasks":
@@ -219,6 +219,9 @@ def tick_once(worksite: Path, config: Config) -> bool:
             return False
         case "no_active":
             say("no active tasks", style="dim")
+            return False
+        case "all_backoff":
+            say("all active tasks in backoff, waiting for retry window", style="dim")
             return False
         case "waiting_on_deps":
             waiting = [

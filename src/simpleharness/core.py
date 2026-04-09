@@ -543,7 +543,9 @@ def check_deliverables(
 
 
 @deal.pure
-def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task | None:
+def pick_next_task(
+    tasks: Sequence[Task], corrections: frozenset[str], now: datetime
+) -> Task | None:
     """Priority: CORRECTION.md exists > active + deps met > lowest slug.
 
     ``corrections`` is the pre-computed set of task slugs that have a
@@ -551,12 +553,23 @@ def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task |
 
     A task is only a candidate if it is ``active`` AND its ``depends_on``
     slugs are all ``done`` (or it has no spec / no deps).
+
+    Tasks in backoff (retry_after > now) are skipped unless they have a
+    CORRECTION.md override.
     """
     all_states: dict[str, str] = {t.slug: t.state.status for t in tasks}
     candidates = [
         t
         for t in tasks
         if t.state.status == "active" and (t.spec is None or deps_satisfied(t.spec, all_states))
+    ]
+    # filter out tasks in backoff (corrections bypass backoff)
+    candidates = [
+        t
+        for t in candidates
+        if t.slug in corrections
+        or t.state.retry_after is None
+        or datetime.fromisoformat(t.state.retry_after) <= now
     ]
     if not candidates:
         return None
@@ -963,7 +976,7 @@ def _slugify(text: str) -> str:
 
 @dataclass(frozen=True)
 class TickPlan:
-    kind: Literal["no_tasks", "no_active", "waiting_on_deps", "block", "run"]
+    kind: Literal["no_tasks", "no_active", "waiting_on_deps", "all_backoff", "block", "run"]
     block_task_slug: str | None = None
     block_reason: str | None = None
     run_task_slug: str | None = None
@@ -976,12 +989,14 @@ def plan_tick(
     workflows_by_name: Mapping[str, Workflow | None],
     corrections: frozenset[str],
     config: Config,
+    now: datetime,
 ) -> TickPlan:
     """Pure planner: given tasks, workflows, corrections, config → TickPlan.
 
     Covers all cases the old tick_once handled:
       - no_tasks: task list is empty
       - no_active: no active tasks
+      - all_backoff: all active tasks are in backoff window
       - block: session cap exceeded, workflow load failure, no phases,
                correction pending but no role, etc.
       - run: a role was determined and is ready to execute
@@ -989,9 +1004,16 @@ def plan_tick(
     if not tasks:
         return TickPlan(kind="no_tasks")
 
-    task = pick_next_task(tasks, corrections)
+    task = pick_next_task(tasks, corrections, now)
     if task is None:
-        # Distinguish: truly no active tasks vs active but deps unmet
+        has_active_in_backoff = any(
+            t.state.status == "active"
+            and t.state.retry_after is not None
+            and datetime.fromisoformat(t.state.retry_after) > now
+            for t in tasks
+        )
+        if has_active_in_backoff:
+            return TickPlan(kind="all_backoff")
         has_active_with_unmet_deps = any(
             t.state.status == "active"
             and t.spec is not None
