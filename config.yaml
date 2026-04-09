@@ -16,7 +16,7 @@ idle_sleep_seconds: 30
 max_sessions_per_task: 20
 
 # A single role can run at most this many times in a row before the harness
-# blocks the task (catches developer <-> expert-critic flip-flops).
+# blocks the task (catches runaway role repetition).
 max_same_role_repeats: 3
 
 # If STATE.md content hash is unchanged across this many consecutive ticks

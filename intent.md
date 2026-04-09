@@ -54,7 +54,7 @@ Each role is a markdown file with YAML frontmatter + a system-prompt body. The h
 | **brainstormer** | Explores user intent, surfaces clarifying questions. Used when a brief is fuzzy. | `superpowers:brainstorming` | |
 | **plan-writer** | Produces a concrete, executable implementation plan. | `superpowers:writing-plans` | |
 | **developer** | Executes the plan via subagent-driven development — dispatches Sonnet subagents per plan step, synthesizes results, commits in atomic chunks. | `superpowers:subagent-driven-development` | |
-| **expert-critic** | Reviews prior work from a specific expert angle (security, a11y, performance, etc.) supplied per invocation. | `superpowers:expert-panel` (single-expert variant) | Often called multiple times per task with different expert areas |
+| **expert-critic** *(subagent)* | Reviews prior work from a specific expert angle (security, a11y, performance, etc.) supplied per invocation. Invoked inline by the developer role via the Agent tool. Lives in `subagents/expert-critic.md`. | `superpowers:expert-panel` (single-expert variant) | Not a workflow phase — called inside the developer session |
 
 All roles run on **Opus** because judgment matters most. To keep cost and context manageable, every role's body explicitly tells the agent to **dispatch Haiku and Sonnet subagents** for mechanical work (file scans, test runs, git inspection, scoped implementation steps). The Opus context is reserved for synthesis, decisions, and orchestration. This subagent-delegation pattern is the single biggest context-efficiency lever the harness gets, and it costs zero Python code — it lives in the role markdown bodies.
 
@@ -63,9 +63,9 @@ All roles run on **Opus** because judgment matters most. To keep cost and contex
 A workflow file is a thin shell that lists the default role order for a task type. Two ship by default:
 
 - **`workflows/universal.md`** — single-phase: just `[project-leader]`. The project-leader picks every other role dynamically via `STATE.next_role`. Best for exploratory or ambiguous work where a fixed order doesn't fit.
-- **`workflows/feature-build.md`** — six phases: `project-leader → brainstormer → plan-writer → developer → expert-critic → project-leader`. The structured spec-driven loop. The project-leader appears at both ends so the harness's linear advance lands on it for wrap-up.
+- **`workflows/feature-build.md`** — five phases: `project-leader → brainstormer → plan-writer → developer → project-leader`. The structured spec-driven loop. The developer invokes expert-critic inline as a subagent (not a separate session). The project-leader appears at both ends so the harness's linear advance lands on it for wrap-up.
 
-Roles can override the default order by writing `next_role` into `STATE.md` mid-task. The expert-critic can loop back to the developer if it finds critical issues. The brainstormer can block the task if it needs user input. The harness has a same-role-3x cap to prevent infinite flip-flops, plus a hard per-task session cap (default 20) and a no-progress hash detector that catches stalled tasks.
+Roles can override the default order by writing `next_role` into `STATE.md` mid-task. The expert-critic subagent is now invoked inline by the developer; if it finds critical issues, the developer loops its own fix cycle. The brainstormer can block the task if it needs user input. The harness has a same-role-3x cap to prevent infinite flip-flops, plus a hard per-task session cap (default 20) and a no-progress hash detector that catches stalled tasks.
 
 Adding a new workflow is just dropping a markdown file into `workflows/`. No Python changes.
 
@@ -145,11 +145,12 @@ SimpleHarness/
 │   ├── project-leader.md          # privileged orchestrator
 │   ├── brainstormer.md
 │   ├── plan-writer.md
-│   ├── developer.md
-│   └── expert-critic.md
+│   └── developer.md
+├── subagents/
+│   └── expert-critic.md           # invoked inline by developer via Agent tool
 └── workflows/
     ├── universal.md               # phases: [project-leader]
-    └── feature-build.md           # 6-phase structured chain
+    └── feature-build.md           # 5-phase structured chain
 ```
 
 ### Per-worksite (created by `simpleharness init`)

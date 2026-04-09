@@ -21,7 +21,7 @@ Expected flow (examples, not rules):
   fuzzy requirements, `plan-writer` for a clear brief, or `developer`
   directly for a trivial fix).
 - Subsequent sessions: the dispatched role runs; project-leader reviews,
-  loops back, dispatches an expert-critic, or wraps up.
+  loops back, or wraps up. (Expert review is done inline by the developer via the expert-critic subagent.)
 - Final session: project-leader writes `FINAL.md`, sets `status=done`.
 
 Since `phases` contains only `project-leader`, the harness's default

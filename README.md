@@ -122,7 +122,8 @@ SimpleHarness/
 │   ├── project-leader.md
 │   ├── brainstormer.md
 │   ├── plan-writer.md
-│   ├── developer.md
+│   └── developer.md
+├── subagents/                        # subagent definitions (Claude Code .claude/agents format)
 │   └── expert-critic.md
 ├── workflows/
 │   ├── universal.md

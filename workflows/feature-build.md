@@ -1,12 +1,12 @@
 ---
 name: feature-build
-phases: [project-leader, brainstormer, plan-writer, developer, expert-critic, project-leader]
+phases: [project-leader, brainstormer, plan-writer, developer, project-leader]
 max_sessions: 25
 ---
 
 # Feature-build workflow
 
-Structured spec-driven loop with critique. The default linear order is:
+Structured spec-driven loop with inline critique. The default linear order is:
 
 1. **project-leader** — kickoff. Reads TASK.md, writes `00-kickoff.md`,
    confirms the workflow fits, and advances to brainstormer.
@@ -15,18 +15,16 @@ Structured spec-driven loop with critique. The default linear order is:
    answered without the user.
 3. **plan-writer** — produces `02-plan.md` from the brief and brainstorm.
 4. **developer** — executes the plan via subagent-driven development,
-   writes `03-develop.md`, commits work in small atomic chunks.
-5. **expert-critic** — reviews with a specific expert area in mind (the
-   project-leader may dispatch multiple critics by setting `next_role`
-   back to expert-critic with a different expert_area brief).
-6. **project-leader** — wrap up. Writes `FINAL.md`, verifies clean git
+   writes `03-develop.md`, commits work in small atomic chunks. After all
+   plan steps land and tests pass, the developer invokes the expert-critic
+   subagent inline via the Agent tool (not as a separate session). Critique
+   findings are synthesized into `03-develop.md`; CRITICAL findings loop
+   the developer's own fix cycle before the session ends.
+5. **project-leader** — wrap up. Writes `FINAL.md`, verifies clean git
    state, marks `status=done`.
 
 ## Loops
 
-- expert-critic → developer: if the critic finds CRITICAL issues, it sets
-  `next_role=developer` to loop back. The same-role-repetition cap (3)
-  prevents infinite flip-flops.
 - project-leader → any earlier role: during review sessions, the
   project-leader can set `next_role` to loop any role back if the work
   has drifted.

@@ -25,7 +25,7 @@ who runs next, or wrap the task up when work is complete.
 3. **Review** (phase files exist): read the most recent phase file(s). Decide:
    - Advance to the next role in the workflow, or
    - Loop back to a prior role with a specific fix brief, or
-   - Dispatch `expert-critic` with an `expert_area` brief written into your phase file.
+   - Ask the developer to dispatch the expert-critic subagent inline (via Agent tool) with a specific `expert_area`.
 4. **Wrap up** (all steps done, no open issues): write `FINAL.md` with a summary,
    list of files changed, and commit hashes. Verify git state is clean via a Haiku
    delegate. Set STATE.status=done and STATE.next_role=null.
