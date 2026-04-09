@@ -255,13 +255,13 @@ name = "simpleharness"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "deal" },
     { name = "pyyaml" },
     { name = "rich" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "deal" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -270,13 +270,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "deal", specifier = ">=4.24.6" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.7" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "deal", specifier = ">=4.24.6" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.9" },

@@ -5,7 +5,10 @@ description = "Lightweight baton-pass agent harness over the Claude Code CLI"
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [{ name = "Ole Johan Bondahl" }]
+# NOTE: deal is a runtime dependency — core.py imports it for @deal.pure.
+# Do NOT move it to [dependency-groups] dev. That breaks `uv tool install`.
 dependencies = [
+    "deal>=4.24.6",
     "pyyaml>=6.0",
     "rich>=13.7",
 ]
@@ -40,7 +43,6 @@ extend-select = ["I", "B", "UP", "SIM", "RUF"]
 
 [dependency-groups]
 dev = [
-    "deal>=4.24.6",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.9",
