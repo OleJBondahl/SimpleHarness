@@ -39,6 +39,7 @@ from simpleharness.core import (
     Role,
     SessionResult,
     State,
+    Subagent,
     Task,
     Workflow,
     _format_tool_call,
@@ -46,6 +47,7 @@ from simpleharness.core import (
     build_claude_cmd,
     build_session_prompt,
     compute_post_session_state,
+    parse_skill_list,
     plan_tick,
     resolve_next_role,
     toolbox_root,
@@ -58,7 +60,16 @@ from simpleharness.core import (
     Permissions as Permissions,  # re-export for downstream scripts
 )
 from simpleharness.core import (
+    Skill as Skill,  # re-export
+)
+from simpleharness.core import (
+    SkillList as SkillList,  # re-export
+)
+from simpleharness.core import (
     _merge_config as _merge_config,  # re-export
+)
+from simpleharness.core import (
+    merge_skill_lists as merge_skill_lists,  # re-export
 )
 from simpleharness.core import (
     parse_frontmatter as parse_frontmatter,  # re-export
@@ -139,6 +150,7 @@ def load_role(name: str) -> Role:
     if not path.exists():
         raise FileNotFoundError(f"role '{name}' not found at {path}")
     meta, body = read_frontmatter_file(path)
+    skills = parse_skill_list(meta.get("skills"))
     return Role(
         name=str(meta.get("name", name)),
         body=body.strip(),
@@ -148,7 +160,40 @@ def load_role(name: str) -> Role:
         allowed_tools=tuple(meta.get("allowed_tools", []) or []),
         privileged=bool(meta.get("privileged", False)),
         source_path=path,
+        skills=skills,
     )
+
+
+def load_subagent(name: str) -> Subagent:
+    path = toolbox_root() / "subagents" / f"{name}.md"
+    if not path.exists():
+        raise FileNotFoundError(f"subagent '{name}' not found at {path}")
+    meta, body = read_frontmatter_file(path)
+    if meta.get("invocation") == "mcp-permission-handler":
+        raise ValueError(
+            f"subagent '{name}': 'invocation: mcp-permission-handler' is only "
+            "valid for main roles under roles/, not subagents/"
+        )
+    skills = parse_skill_list(meta.get("skills"))
+    return Subagent(
+        name=str(meta.get("name", name)),
+        body=body.strip(),
+        description=str(meta.get("description", "")),
+        model=meta.get("model"),
+        tools=tuple(meta.get("tools", meta.get("allowed_tools", [])) or []),
+        source_path=path,
+        skills=skills,
+    )
+
+
+def load_all_subagents() -> tuple[Subagent, ...]:
+    subagents_dir = toolbox_root() / "subagents"
+    if not subagents_dir.exists():
+        return ()
+    out = []
+    for path in sorted(subagents_dir.glob("*.md")):
+        out.append(load_subagent(path.stem))
+    return tuple(out)
 
 
 # ────────────────────────────────────────────────────────────────────────────

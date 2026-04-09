@@ -81,6 +81,19 @@ class Config:
 
 
 @dataclass(frozen=True)
+class Skill:
+    name: str
+    hint: str = ""
+
+
+@dataclass(frozen=True)
+class SkillList:
+    available: tuple[Skill, ...] = field(default_factory=tuple)
+    must_use: tuple[str, ...] = field(default_factory=tuple)
+    exclude_default_must_use: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class Role:
     name: str
     body: str  # the system prompt body (frontmatter stripped)
@@ -90,6 +103,18 @@ class Role:
     allowed_tools: tuple[str, ...] = field(default_factory=tuple)
     privileged: bool = False
     source_path: Path | None = None
+    skills: SkillList = field(default_factory=SkillList)
+
+
+@dataclass(frozen=True)
+class Subagent:
+    name: str
+    body: str
+    description: str = ""
+    model: str | None = None
+    tools: tuple[str, ...] = field(default_factory=tuple)
+    source_path: Path | None = None
+    skills: SkillList = field(default_factory=SkillList)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -141,6 +166,93 @@ def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, A
         else:
             out[k] = v
     return out
+
+
+@deal.has()
+def parse_skill_list(raw: Any) -> SkillList:
+    """Parse the `skills:` block from frontmatter into a SkillList.
+
+    Accepts the raw dict (or None) read from YAML.
+    Missing or malformed sub-fields silently become empty.
+    """
+    if raw is None:
+        return SkillList()
+    if not isinstance(raw, dict):
+        raise ValueError("skills: must be a mapping")
+
+    available_raw = raw.get("available")
+    if available_raw is None:
+        available: tuple[Skill, ...] = ()
+    elif not isinstance(available_raw, list):
+        raise ValueError("skills.available: must be a list")
+    else:
+        skills: list[Skill] = []
+        for entry in available_raw:
+            if isinstance(entry, str):
+                skills.append(Skill(name=entry))
+            elif isinstance(entry, dict):
+                if "name" not in entry:
+                    raise ValueError("skills.available: each entry must have a 'name' key")
+                skills.append(Skill(name=str(entry["name"]), hint=str(entry.get("hint", ""))))
+            else:
+                raise ValueError("skills.available: each entry must be a string or mapping")
+        available = tuple(skills)
+
+    must_use_raw = raw.get("must_use")
+    if must_use_raw is None:
+        must_use: tuple[str, ...] = ()
+    elif not isinstance(must_use_raw, list):
+        raise ValueError("skills.must_use: must be a list")
+    else:
+        must_use = tuple(str(s) for s in must_use_raw)
+
+    exclude_raw = raw.get("exclude_default_must_use")
+    if exclude_raw is None:
+        exclude_default_must_use: tuple[str, ...] = ()
+    elif not isinstance(exclude_raw, list):
+        raise ValueError("skills.exclude_default_must_use: must be a list")
+    else:
+        exclude_default_must_use = tuple(str(s) for s in exclude_raw)
+
+    return SkillList(
+        available=available,
+        must_use=must_use,
+        exclude_default_must_use=exclude_default_must_use,
+    )
+
+
+@deal.pure
+def merge_skill_lists(role_skills: SkillList, default_skills: SkillList) -> SkillList:
+    """Merge default skills into a role's skills list.
+
+    - `available`: union (defaults first, then role-specific; de-dup by name, role hints win).
+    - `must_use`: union (defaults + role) minus anything in role.exclude_default_must_use.
+      Preserves order: defaults first, then role additions, de-duplicated.
+    - `exclude_default_must_use`: carried from role_skills unchanged.
+    """
+    # Merge available: defaults first, role wins on collision
+    seen_names: dict[str, Skill] = {}
+    for skill in default_skills.available:
+        seen_names[skill.name] = skill
+    for skill in role_skills.available:
+        seen_names[skill.name] = skill  # role hint wins
+    merged_available = tuple(seen_names.values())
+
+    # Merge must_use: defaults + role, minus exclude_default_must_use
+    excluded = set(role_skills.exclude_default_must_use)
+    merged_must_use_names: dict[str, None] = {}
+    for name in default_skills.must_use:
+        if name not in excluded:
+            merged_must_use_names[name] = None
+    for name in role_skills.must_use:
+        merged_must_use_names[name] = None
+    merged_must_use = tuple(merged_must_use_names)
+
+    return SkillList(
+        available=merged_available,
+        must_use=merged_must_use,
+        exclude_default_must_use=role_skills.exclude_default_must_use,
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
