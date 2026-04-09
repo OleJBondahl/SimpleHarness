@@ -242,3 +242,120 @@ def _extract_assistant_text(obj: Any) -> str:
 
 def _task_dir(worksite: Path, task_slug: str) -> Path:
     return worksite / "simpleharness" / "tasks" / task_slug
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Phase 3a — plan/finalize dataclasses
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@dataclasses.dataclass(frozen=True)
+class SpawnRequest:
+    """Everything the shell needs to call _spawn_approver."""
+
+    prompt: str
+    approver_model: str
+    role_path: Path
+    worksite: Path
+    task_slug: str
+    timeout_s: float
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewPlan:
+    """Tagged union — exactly one of the three action fields is set.
+
+    Shell inspects each field in priority order:
+      1. ``preemptive_deny`` — short-circuit before spawning
+      2. ``fake_verdict``    — use synthesised verdict, skip spawn
+      3. ``spawn``           — run claude -p and parse result
+
+    ``prompt`` is set whenever a prompt was built (fake or spawn paths)
+    so the shell can include ``prompt_len`` in the fake log without
+    re-computing the prompt itself.
+    """
+
+    preemptive_deny: str | None = None
+    fake_verdict: Verdict | None = None
+    spawn: SpawnRequest | None = None
+    prompt: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class ReviewOutcome:
+    """Action intents returned by finalize_review — shell executes the side effects."""
+
+    verdict: Verdict
+    pattern_to_persist: str | None  # set when allow + pattern non-empty
+    should_escalate: bool  # true when deny + escalate_denials_to_correction
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Pure planning functions
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def plan_review(
+    env: ApproverEnv,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    cfg: Any,
+    *,
+    role_file_exists: bool,
+    stream_tail: str,
+    currently_approved: tuple[str, ...],
+) -> ReviewPlan:
+    """Decide what the shell should do — no I/O, no subprocess, no env reads.
+
+    Returns a ReviewPlan with exactly one field set:
+    - ``preemptive_deny`` if the role file is missing (belt-and-braces check)
+    - ``fake_verdict``    if env.fake is True
+    - ``spawn``           for the normal slow path
+    """
+    if not role_file_exists:
+        role_path = Path("roles") / "approver.md"  # for a legible error message
+        return ReviewPlan(preemptive_deny=f"approver role file not found at {role_path}")
+
+    prompt = build_approver_prompt(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        role=env.role,
+        task_slug=env.task_slug,
+        stream_tail=stream_tail,
+        currently_approved=list(currently_approved),
+    )
+
+    if env.fake:
+        verdict = fake_verdict_from_input(tool_name, tool_input)
+        return ReviewPlan(fake_verdict=verdict, prompt=prompt)
+
+    role_path = Path("roles") / "approver.md"  # placeholder; shell passes the real path
+    spawn = SpawnRequest(
+        prompt=prompt,
+        approver_model=env.approver_model,
+        role_path=role_path,
+        worksite=env.worksite,
+        task_slug=env.task_slug,
+        timeout_s=env.timeout_s,
+    )
+    return ReviewPlan(spawn=spawn, prompt=prompt)
+
+
+def finalize_review(verdict: Verdict, cfg: Any) -> ReviewOutcome:
+    """Map a parsed Verdict to action intents the shell will execute.
+
+    Pure: no file access, no subprocess, no env reads.
+
+    - ``pattern_to_persist`` is set iff decision is "allow" and pattern is non-empty.
+    - ``should_escalate``    is set iff decision is "deny" and the config flag is on.
+    """
+    pattern_to_persist: str | None = None
+    if verdict.decision == "allow" and verdict.pattern.strip():
+        pattern_to_persist = verdict.pattern
+
+    should_escalate = verdict.decision == "deny" and cfg.permissions.escalate_denials_to_correction
+    return ReviewOutcome(
+        verdict=verdict,
+        pattern_to_persist=pattern_to_persist,
+        should_escalate=should_escalate,
+    )

@@ -39,9 +39,9 @@ from simpleharness.approver_core import (
     _deny_synthetic,
     _extract_assistant_text,
     _task_dir,
-    build_approver_prompt,
-    fake_verdict_from_input,
+    finalize_review,
     parse_verdict,
+    plan_review,
 )
 from simpleharness.core import toolbox_root
 from simpleharness.shell import (
@@ -354,14 +354,11 @@ def _escalate_denial(
 
 
 def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Verdict:
-    """Top-level slow-path pipeline.
+    """Top-level slow-path pipeline — thin coordinator.
 
-    1. Load config + approver role.
-    2. Read stream tail.
-    3. FAKE mode: synthesize verdict; else build prompt + spawn + parse.
-    4. On allow: persist pattern + refresh fast-path allowlist.
-    5. On deny: maybe escalate to CORRECTION.md.
+    Gather inputs → plan (pure) → dispatch → finalize (pure) → side effects.
     """
+    # ── gather ────────────────────────────────────────────────────────────────
     try:
         cfg = load_config(env.worksite)
     except Exception as e:
@@ -374,26 +371,27 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
         _stderr(f"load_role('approver') failed: {e}")
         return _deny_synthetic(f"approver role missing or invalid: {e}")
 
-    # Belt-and-braces: construct the exact path the spawn will pass to
-    # ``--append-system-prompt-file`` and verify it exists here so we
-    # never silently spawn a child with a bogus prompt file.
     role_path = toolbox_root() / "roles" / "approver.md"
-    if not role_path.is_file():
-        return _deny_synthetic(f"approver role file not found at {role_path}")
-
     stream_tail = _read_stream_tail(env.stream_log)
 
-    prompt = build_approver_prompt(
-        tool_name=tool_name,
-        tool_input=tool_input,
-        role=env.role,
-        task_slug=env.task_slug,
+    # ── plan (pure) ───────────────────────────────────────────────────────────
+    _plan = plan_review(
+        env,
+        tool_name,
+        tool_input,
+        cfg,
+        role_file_exists=role_path.is_file(),
         stream_tail=stream_tail,
-        currently_approved=list(cfg.permissions.extra_bash_allow),
+        currently_approved=tuple(cfg.permissions.extra_bash_allow),
     )
 
-    if env.fake:
-        verdict = fake_verdict_from_input(tool_name, tool_input)
+    # ── dispatch ──────────────────────────────────────────────────────────────
+    if _plan.preemptive_deny:
+        return _deny_synthetic(_plan.preemptive_deny)
+
+    if _plan.fake_verdict is not None:
+        verdict = _plan.fake_verdict
+        # side effect: write fake log
         try:
             task_log_dir = _approver_log_dir(env.worksite, env.task_slug)
             (task_log_dir / f"approver-{_now_stamp()}-fake.jsonl").write_text(
@@ -403,7 +401,7 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
                         "tool_name": tool_name,
                         "tool_input": tool_input,
                         "verdict": dataclasses.asdict(verdict),
-                        "prompt_len": len(prompt),
+                        "prompt_len": len(_plan.prompt),
                     }
                 )
                 + "\n",
@@ -412,15 +410,17 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
         except OSError as e:
             _stderr(f"failed to write fake approver log: {e}")
     else:
+        assert _plan.spawn is not None
+        # Shell builds the real role_path for spawn (plan only has a placeholder)
         try:
             task_log_dir = _approver_log_dir(env.worksite, env.task_slug)
             final_msg = _spawn_approver(
-                prompt=prompt,
-                approver_model=env.approver_model,
+                prompt=_plan.spawn.prompt,
+                approver_model=_plan.spawn.approver_model,
                 approver_role_path=role_path,
                 task_log_dir=task_log_dir,
-                worksite=env.worksite,
-                timeout_s=env.timeout_s,
+                worksite=_plan.spawn.worksite,
+                timeout_s=_plan.spawn.timeout_s,
             )
         except FileNotFoundError:
             return _deny_synthetic("approver could not be spawned: 'claude' not on PATH")
@@ -435,25 +435,27 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
             return _deny_synthetic(f"approver spawn failed: {e}")
         verdict = parse_verdict(final_msg)
 
-    if verdict.decision == "allow":
-        pattern = verdict.pattern
-        # Persist the pattern to config.yaml AND refresh the fast-path
-        # allowlist under a single shared lock so concurrent approver
-        # processes cannot race and drop patterns from the allowlist
-        # file. Config write is best-effort: on failure we still allow
-        # the current call so the working agent isn't blocked.
+    # ── finalize (pure) + side effects ────────────────────────────────────────
+    outcome = finalize_review(verdict, cfg)
+
+    if outcome.pattern_to_persist:
         try:
-            persist_approver_allow(env.worksite, pattern, _task_dir(env.worksite, env.task_slug))
+            persist_approver_allow(
+                env.worksite,
+                outcome.pattern_to_persist,
+                _task_dir(env.worksite, env.task_slug),
+            )
         except Exception as e:
             _stderr(f"persist_approver_allow failed: {e}")
-        _stderr(f"allow: pattern={pattern!r} reason={verdict.reason!r}")
-        return verdict
+        _stderr(f"allow: pattern={outcome.pattern_to_persist!r} reason={verdict.reason!r}")
 
-    # deny
-    _stderr(f"deny: reason={verdict.reason!r}")
-    if cfg.permissions.escalate_denials_to_correction:
+    if outcome.should_escalate:
         _escalate_denial(env.worksite, env.task_slug, tool_name, tool_input, verdict.reason)
-    return verdict
+
+    if verdict.decision == "deny":
+        _stderr(f"deny: reason={verdict.reason!r}")
+
+    return outcome.verdict
 
 
 def main() -> None:
