@@ -48,6 +48,36 @@ Press `Ctrl+C` a second time at the correction prompt to abort the harness.
 5. When the final role writes `FINAL.md` and sets `status=done`, the harness
    moves on to the next active task — or goes idle if there are none.
 
+## TASK.md schema
+
+Each task's `TASK.md` supports a rich frontmatter + body schema:
+
+```yaml
+---
+title: "Human-readable title"
+workflow: feature-build
+worksite: .
+depends_on: [001-prerequisite-slug]    # hard prerequisites (must be done first)
+deliverables:                          # files this task produces
+  - path: docs/report.md
+    description: "Decision report"
+refine_on_deps_complete: false         # true = upstream may auto-refine this brief
+references:                            # authoritative input docs
+  - docs/architecture.md
+---
+```
+
+**Body sections**: `# Goal`, `## Success criteria` (checklist), `## Boundaries`
+(scope guardrails), `## Autonomy` (pre-authorized vs must-block decisions),
+`## Handoff` (what downstream tasks consume), `## Notes`.
+
+The harness enforces dependencies: a task won't start until all `depends_on` slugs
+are `done`. When a task completes, downstream tasks are either left active for
+auto-refinement or blocked for user re-briefing, depending on `refine_on_deps_complete`.
+
+Use the `simpleharness-task` Claude Code skill to walk through authoring tasks
+interactively.
+
 ## Toolbox vs Worksite
 
 SimpleHarness uses a two-repo split:

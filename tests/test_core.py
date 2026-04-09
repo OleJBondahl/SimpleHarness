@@ -11,19 +11,26 @@ import pytest
 
 from simpleharness.core import (
     Config,
+    Deliverable,
+    DownstreamAction,
     Permissions,
     SessionResult,
     State,
     Task,
+    TaskSpec,
     Workflow,
     _format_tool_call,
     _merge_config,
     _slugify,
     build_claude_cmd,
     build_session_prompt,
+    check_deliverables,
     compute_post_session_state,
+    deps_satisfied,
     parse_frontmatter,
+    parse_task_spec,
     pick_next_task,
+    plan_downstream_transitions,
     plan_tick,
     resolve_next_role,
     worksite_sh_dir,
@@ -70,6 +77,7 @@ def _task(
     *,
     slug: str = "001-test",
     state: State | None = None,
+    spec: TaskSpec | None = None,
 ) -> Task:
     if state is None:
         state = _state(slug=slug)
@@ -80,6 +88,7 @@ def _task(
         task_md=folder / "TASK.md",
         state_path=folder / "STATE.md",
         state=state,
+        spec=spec,
     )
 
 
@@ -707,3 +716,279 @@ def test_toolbox_root_returns_path():
     result = toolbox_root()
     assert isinstance(result, Path)
     assert result.is_absolute()
+
+
+# ── TaskSpec dataclasses ─────────────────────────────────────────────────────
+
+
+def test_deliverable_is_frozen():
+    d = Deliverable(path="out.md", description="report")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cast(Any, d).path = "other.md"
+
+
+def test_task_spec_is_frozen():
+    ts = TaskSpec(title="t", workflow="universal")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cast(Any, ts).title = "other"
+
+
+def test_downstream_action_is_frozen():
+    da = DownstreamAction(
+        task_slug="002-foo",
+        action="leave_active",
+        upstream_deliverables=(),
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cast(Any, da).action = "block_for_rebrief"
+
+
+def test_task_spec_defaults():
+    ts = TaskSpec(title="t", workflow="w")
+    assert ts.depends_on == ()
+    assert ts.deliverables == ()
+    assert ts.refine_on_deps_complete is False
+    assert ts.references == ()
+
+
+# ── parse_task_spec ──────────────────────────────────────────────────────────
+
+
+def test_parse_task_spec_full():
+    fm = {
+        "title": "Add feature X",
+        "workflow": "feature-build",
+        "depends_on": ["001-refactor"],
+        "deliverables": [
+            {"path": "docs/report.md", "description": "Decision report"},
+        ],
+        "refine_on_deps_complete": True,
+        "references": ["README.md", "docs/arch.md"],
+    }
+    spec = parse_task_spec(fm)
+    assert spec.title == "Add feature X"
+    assert spec.workflow == "feature-build"
+    assert spec.depends_on == ("001-refactor",)
+    assert spec.deliverables == (Deliverable("docs/report.md", "Decision report"),)
+    assert spec.refine_on_deps_complete is True
+    assert spec.references == ("README.md", "docs/arch.md")
+
+
+def test_parse_task_spec_minimal():
+    fm = {"title": "Fix bug", "workflow": "universal"}
+    spec = parse_task_spec(fm)
+    assert spec.title == "Fix bug"
+    assert spec.workflow == "universal"
+    assert spec.depends_on == ()
+    assert spec.deliverables == ()
+    assert spec.refine_on_deps_complete is False
+    assert spec.references == ()
+
+
+def test_parse_task_spec_empty_frontmatter():
+    spec = parse_task_spec({})
+    assert spec.title == ""
+    assert spec.workflow == ""
+    assert spec.depends_on == ()
+
+
+def test_parse_task_spec_deliverable_as_string():
+    """Deliverable can be a plain string (path only, no description)."""
+    fm = {
+        "title": "t",
+        "workflow": "w",
+        "deliverables": ["out.md"],
+    }
+    spec = parse_task_spec(fm)
+    assert spec.deliverables == (Deliverable("out.md", ""),)
+
+
+def test_parse_task_spec_none_fields_treated_as_empty():
+    fm = {
+        "title": "t",
+        "workflow": "w",
+        "depends_on": None,
+        "deliverables": None,
+        "references": None,
+    }
+    spec = parse_task_spec(fm)
+    assert spec.depends_on == ()
+    assert spec.deliverables == ()
+    assert spec.references == ()
+
+
+# ── deps_satisfied ───────────────────────────────────────────────────────────
+
+
+def test_deps_satisfied_no_deps():
+    spec = TaskSpec(title="t", workflow="w", depends_on=())
+    assert deps_satisfied(spec, {}) is True
+
+
+def test_deps_satisfied_all_done():
+    spec = TaskSpec(title="t", workflow="w", depends_on=("001-a", "002-b"))
+    states = {"001-a": "done", "002-b": "done", "003-c": "active"}
+    assert deps_satisfied(spec, states) is True
+
+
+def test_deps_satisfied_one_not_done():
+    spec = TaskSpec(title="t", workflow="w", depends_on=("001-a", "002-b"))
+    states = {"001-a": "done", "002-b": "active"}
+    assert deps_satisfied(spec, states) is False
+
+
+def test_deps_satisfied_missing_slug():
+    spec = TaskSpec(title="t", workflow="w", depends_on=("001-a",))
+    assert deps_satisfied(spec, {}) is False
+
+
+# ── plan_downstream_transitions ──────────────────────────────────────────────
+
+
+def test_plan_downstream_no_dependents():
+    specs = {
+        "001-a": TaskSpec(title="a", workflow="w"),
+        "002-b": TaskSpec(title="b", workflow="w"),
+    }
+    result = plan_downstream_transitions("001-a", specs)
+    assert result == ()
+
+
+def test_plan_downstream_refine_true():
+    specs = {
+        "001-a": TaskSpec(
+            title="a",
+            workflow="w",
+            deliverables=(Deliverable("out.md", "report"),),
+        ),
+        "002-b": TaskSpec(
+            title="b",
+            workflow="w",
+            depends_on=("001-a",),
+            refine_on_deps_complete=True,
+        ),
+    }
+    result = plan_downstream_transitions("001-a", specs)
+    assert len(result) == 1
+    assert result[0].task_slug == "002-b"
+    assert result[0].action == "leave_active"
+    assert result[0].upstream_deliverables == (Deliverable("out.md", "report"),)
+
+
+def test_plan_downstream_refine_false():
+    specs = {
+        "001-a": TaskSpec(title="a", workflow="w"),
+        "002-b": TaskSpec(
+            title="b",
+            workflow="w",
+            depends_on=("001-a",),
+            refine_on_deps_complete=False,
+        ),
+    }
+    result = plan_downstream_transitions("001-a", specs)
+    assert len(result) == 1
+    assert result[0].action == "block_for_rebrief"
+
+
+def test_plan_downstream_multiple_dependents():
+    specs = {
+        "001-a": TaskSpec(title="a", workflow="w"),
+        "002-b": TaskSpec(title="b", workflow="w", depends_on=("001-a",)),
+        "003-c": TaskSpec(
+            title="c",
+            workflow="w",
+            depends_on=("001-a",),
+            refine_on_deps_complete=True,
+        ),
+    }
+    result = plan_downstream_transitions("001-a", specs)
+    assert len(result) == 2
+    slugs = {r.task_slug for r in result}
+    assert slugs == {"002-b", "003-c"}
+
+
+# ── check_deliverables ──────────────────────────────────────────────────────
+
+
+def test_check_deliverables_all_present():
+    spec = TaskSpec(
+        title="t",
+        workflow="w",
+        deliverables=(Deliverable("a.md", ""), Deliverable("b.md", "")),
+    )
+    missing = check_deliverables(spec, frozenset({"a.md", "b.md", "c.md"}))
+    assert missing == ()
+
+
+def test_check_deliverables_some_missing():
+    spec = TaskSpec(
+        title="t",
+        workflow="w",
+        deliverables=(Deliverable("a.md", ""), Deliverable("b.md", "")),
+    )
+    missing = check_deliverables(spec, frozenset({"a.md"}))
+    assert missing == ("b.md",)
+
+
+def test_check_deliverables_no_deliverables():
+    spec = TaskSpec(title="t", workflow="w")
+    missing = check_deliverables(spec, frozenset())
+    assert missing == ()
+
+
+# ── pick_next_task with deps ─────────────────────────────────────────────────
+
+
+def test_pick_next_task_skips_unmet_deps():
+    """Task with unmet deps is skipped even if it's the lowest slug."""
+    spec_with_dep = TaskSpec(title="b", workflow="w", depends_on=("000-prereq",))
+    t1 = _task(slug="001-blocked", spec=spec_with_dep)
+    t2 = _task(slug="002-free")
+    result = pick_next_task([t1, t2], frozenset())
+    assert result is not None
+    assert result.slug == "002-free"
+
+
+def test_pick_next_task_allows_met_deps():
+    """Task with all deps done is a valid candidate."""
+    spec_with_dep = TaskSpec(title="b", workflow="w", depends_on=("001-prereq",))
+    t1 = _task(slug="001-prereq", state=_state(slug="001-prereq", status="done"))
+    t2 = _task(slug="002-next", spec=spec_with_dep)
+    result = pick_next_task([t1, t2], frozenset())
+    assert result is not None
+    assert result.slug == "002-next"
+
+
+def test_pick_next_task_no_spec_treated_as_no_deps():
+    """Tasks without a spec (old-style) are always eligible."""
+    t = _task(slug="001-old", spec=None)
+    result = pick_next_task([t], frozenset())
+    assert result is not None
+    assert result.slug == "001-old"
+
+
+def test_pick_next_task_returns_none_when_all_deps_unmet():
+    spec = TaskSpec(title="a", workflow="w", depends_on=("000-missing",))
+    t = _task(slug="001-waiting", spec=spec)
+    result = pick_next_task([t], frozenset())
+    assert result is None
+
+
+# ── plan_tick waiting_on_deps ────────────────────────────────────────────────
+
+
+def test_plan_tick_waiting_on_deps():
+    """Active task with unmet deps returns waiting_on_deps, not no_active."""
+    spec = TaskSpec(title="a", workflow="w", depends_on=("000-prereq",))
+    t = _task(slug="001-waiting", spec=spec)
+    wf = {"w": _workflow(name="w")}
+    plan = plan_tick((t,), wf, frozenset(), _config())
+    assert plan.kind == "waiting_on_deps"
+
+
+def test_plan_tick_no_active_when_truly_none():
+    """Only done/blocked tasks → no_active (not waiting_on_deps)."""
+    t = _task(slug="001-done", state=_state(slug="001-done", status="done"))
+    wf = {"w": _workflow(name="w")}
+    plan = plan_tick((t,), wf, frozenset(), _config())
+    assert plan.kind == "no_active"

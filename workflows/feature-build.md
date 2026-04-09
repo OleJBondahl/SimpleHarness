@@ -34,3 +34,11 @@ Structured spec-driven loop with inline critique. The default linear order is:
 
 Because `project-leader` appears at both ends of `phases`, the harness's
 linear advance will land on it naturally for wrap-up.
+
+## TASK.md extended fields
+
+Tasks may include `depends_on`, `deliverables`, `refine_on_deps_complete`,
+and `references` in their frontmatter, plus `## Success criteria`,
+`## Boundaries`, `## Autonomy`, and `## Handoff` sections in the body.
+All roles respect these fields — see each role's "Autonomy and boundaries"
+section for details.

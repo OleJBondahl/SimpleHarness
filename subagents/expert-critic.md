@@ -75,6 +75,16 @@ The caller (developer role) decides whether to loop back to its own fix cycle ba
 on CRITICAL findings. You do NOT write phase files or update STATE.md — those are
 the developer role's responsibility.
 
+## Autonomy and boundaries
+
+TASK.md may contain `## Autonomy` and `## Boundaries` sections.
+
+- **Boundaries**: do not critique or flag issues in files listed as off-limits.
+- **Autonomy — pre-authorized**: items listed here are intentional decisions; do not
+  flag them as CONCERN or CRITICAL.
+- **Autonomy — must block**: if your critique surfaces one of these decision points,
+  mark it as CRITICAL and note that it requires user input.
+
 ## Stay in lane
 
 - Do not write fix code, suggest refactors inline, or edit worksite files.

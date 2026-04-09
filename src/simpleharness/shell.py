@@ -43,6 +43,7 @@ from simpleharness.core import (
     State,
     Subagent,
     Task,
+    TaskSpec,
     Workflow,
     _format_tool_call,
     _slugify,
@@ -51,8 +52,11 @@ from simpleharness.core import (
     build_session_env,
     build_session_hooks_config,
     build_session_prompt,
+    check_deliverables,
     compute_post_session_state,
     parse_skill_list,
+    parse_task_spec,
+    plan_downstream_transitions,
     plan_tick,
     resolve_next_role,
     toolbox_root,
@@ -679,8 +683,22 @@ def discover_tasks(worksite: Path) -> list[Task]:
         except (ValueError, yaml.YAMLError) as e:
             warn(f"skipping {child.name}: unreadable STATE.md ({e})")
             continue
+        spec = None
+        if task_md.exists():
+            try:
+                fm, _body = read_frontmatter_file(task_md)
+                spec = parse_task_spec(fm)
+            except (ValueError, yaml.YAMLError) as e:
+                warn(f"{child.name}: unreadable TASK.md frontmatter ({e}), skipping spec")
         out.append(
-            Task(slug=child.name, folder=child, task_md=task_md, state_path=state_path, state=state)
+            Task(
+                slug=child.name,
+                folder=child,
+                task_md=task_md,
+                state_path=state_path,
+                state=state,
+                spec=spec,
+            )
         )
     return out
 
@@ -1149,6 +1167,65 @@ def _task_by_slug(tasks: tuple[Task, ...], slug: str | None) -> Task:
     raise ValueError(f"task slug {slug!r} not found in task list")
 
 
+def _handle_downstream_transitions(
+    done_task: Task,
+    all_tasks: tuple[Task, ...],
+    worksite: Path,
+) -> None:
+    """After a task completes, update downstream tasks based on their refine_on_deps_complete."""
+    all_specs: dict[str, TaskSpec] = {}
+    for t in all_tasks:
+        if t.spec is not None:
+            all_specs[t.slug] = t.spec
+
+    actions = plan_downstream_transitions(done_task.slug, all_specs)
+    for action in actions:
+        downstream = next((t for t in all_tasks if t.slug == action.task_slug), None)
+        if downstream is None:
+            continue
+        if action.action == "block_for_rebrief":
+            new_state = replace(
+                downstream.state,
+                status="blocked",
+                blocked_reason="awaiting_brief_refinement",
+            )
+            write_state(downstream.state_path, new_state)
+            # Write NEEDS_REBRIEF.md
+            deliverable_lines = "\n".join(
+                f"- `{d.path}`: {d.description}" for d in action.upstream_deliverables
+            )
+            rebrief_text = (
+                f"# Rebrief needed\n\n"
+                f"Upstream task **{done_task.slug}** has completed.\n\n"
+                f"## Upstream deliverables\n\n"
+                f"{deliverable_lines or '(none declared)'}\n\n"
+                f"## Action required\n\n"
+                f"Review the upstream outputs and refine this task's TASK.md "
+                f"(success criteria, references, etc.), then run "
+                f"`simpleharness unblock {action.task_slug}`.\n"
+            )
+            (downstream.folder / "NEEDS_REBRIEF.md").write_text(rebrief_text, encoding="utf-8")
+            say(f"task {action.task_slug}: blocked for rebrief (upstream {done_task.slug} done)")
+        else:
+            # leave_active — project-leader will handle refinement on next kick-off
+            say(f"task {action.task_slug}: upstream {done_task.slug} done, auto-refine on next run")
+
+
+def _update_blocked_tasks_index(worksite: Path) -> None:
+    """Maintain simpleharness/BLOCKED_TASKS.md — written when tasks are blocked, deleted otherwise."""
+    blocked = [t for t in discover_tasks(worksite) if t.state.status == "blocked"]
+    index_path = worksite_sh_dir(worksite) / "BLOCKED_TASKS.md"
+    if not blocked:
+        if index_path.exists():
+            index_path.unlink()
+        return
+    rows = "\n".join(f"| {t.slug} | {t.state.blocked_reason or ''} |" for t in blocked)
+    index_path.write_text(
+        f"# Blocked tasks\n\n| Task | Reason |\n|------|--------|\n{rows}\n",
+        encoding="utf-8",
+    )
+
+
 def tick_once(worksite: Path, config: Config) -> bool:
     """One iteration of the loop. Returns True if we ran a session, False if idle."""
     tasks = tuple(discover_tasks(worksite))
@@ -1165,11 +1242,19 @@ def tick_once(worksite: Path, config: Config) -> bool:
         case "no_active":
             say("no active tasks", style="dim")
             return False
+        case "waiting_on_deps":
+            waiting = [
+                t for t in tasks if t.state.status == "active" and t.spec and t.spec.depends_on
+            ]
+            slugs = ", ".join(t.slug for t in waiting[:3])
+            say(f"waiting on dependencies: {slugs}", style="dim")
+            return False
         case "block":
             task = _task_by_slug(tasks, plan.block_task_slug)
             err(f"task {task.slug}: {plan.block_reason}")
             new_state = replace(task.state, status="blocked", blocked_reason=plan.block_reason)
             write_state(task.state_path, new_state)
+            _update_blocked_tasks_index(worksite)
             return False
         case "run":
             task = _task_by_slug(tasks, plan.run_task_slug)
@@ -1256,11 +1341,34 @@ def tick_once(worksite: Path, config: Config) -> bool:
             ):
                 warn(f"task {task.slug}: no progress for {new_state.no_progress_ticks} ticks")
 
+            # Deliverable verification before allowing done
+            if new_state.status == "done" and task.spec and task.spec.deliverables:
+                existing = frozenset(
+                    d.path for d in task.spec.deliverables if (worksite / d.path).exists()
+                )
+                missing = check_deliverables(task.spec, existing)
+                if missing:
+                    missing_list = ", ".join(missing)
+                    warn(f"task {task.slug}: missing deliverables: {missing_list}")
+                    # Retry: dispatch project-leader to investigate
+                    new_state = replace(
+                        new_state,
+                        status="active",
+                        next_role="project-leader",
+                        blocked_reason=f"missing deliverables (retry): {missing_list}",
+                    )
+
             write_state(task.state_path, new_state)
             say(
                 f"task {task.slug}: session complete  "
                 f"(status={new_state.status}, next_role={new_state.next_role or 'auto'})"
             )
+
+            # Downstream transitions when task completes
+            if new_state.status == "done":
+                _handle_downstream_transitions(task, tasks, worksite)
+
+            _update_blocked_tasks_index(worksite)
             return True
         case _:
             return False
@@ -1316,12 +1424,28 @@ def cmd_new(args: argparse.Namespace) -> int:
         "title": args.title,
         "workflow": args.workflow,
         "worksite": ".",
+        "depends_on": [],
+        "deliverables": [],
+        "refine_on_deps_complete": False,
+        "references": [],
     }
     task_body = (
         "# Goal\n\n"
-        "<describe what you want done. be specific about constraints.>\n\n"
-        "## Constraints\n\n"
-        "- <any boundaries>\n"
+        "<describe the desired outcome in one paragraph>\n\n"
+        "## Success criteria\n\n"
+        "- [ ] <objectively testable criterion>\n"
+        "- [ ] <objectively testable criterion>\n\n"
+        "## Boundaries\n\n"
+        "- <what this task must NOT touch>\n\n"
+        "## Autonomy\n\n"
+        "**Pre-authorized (decide and proceed):**\n"
+        "- <decisions the agent can make without asking>\n\n"
+        "**Must block (stop and write BLOCKED.md):**\n"
+        "- <decisions that require user input>\n\n"
+        "## Handoff\n\n"
+        "<only needed if this task has dependents — describe what downstream consumes>\n\n"
+        "## Notes\n\n"
+        "<optional context>\n"
     )
     yaml_fm = yaml.safe_dump(task_frontmatter, sort_keys=False, allow_unicode=True)
     (folder / "TASK.md").write_text(f"---\n{yaml_fm}---\n\n{task_body}", encoding="utf-8")
@@ -1384,7 +1508,17 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"last={t.state.last_role or '-'}  next={t.state.next_role or '-'}  "
             f"sessions={t.state.total_sessions}/{t.state.session_cap}"
         )
+        if t.state.status == "blocked":
+            line += f"  reason={t.state.blocked_reason}"
         console.print(line)
+    blocked = [t for t in tasks if t.state.status == "blocked"]
+    if blocked:
+        reasons: dict[str, int] = {}
+        for t in blocked:
+            r = t.state.blocked_reason or "unknown"
+            reasons[r] = reasons.get(r, 0) + 1
+        parts = [f"{v} {k}" for k, v in reasons.items()]
+        say(f"\n{len(blocked)} blocked: {', '.join(parts)}")
     return 0
 
 

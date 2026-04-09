@@ -328,6 +328,7 @@ class Task:
     task_md: Path
     state_path: Path
     state: State
+    spec: TaskSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -337,6 +338,34 @@ class SessionResult:
     session_id: str | None
     result_text: str | None
     exit_code: int | None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Task specification (parsed from TASK.md frontmatter)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Deliverable:
+    path: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class TaskSpec:
+    title: str
+    workflow: str
+    depends_on: tuple[str, ...] = field(default_factory=tuple)
+    deliverables: tuple[Deliverable, ...] = field(default_factory=tuple)
+    refine_on_deps_complete: bool = False
+    references: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class DownstreamAction:
+    task_slug: str
+    action: Literal["leave_active", "block_for_rebrief"]
+    upstream_deliverables: tuple[Deliverable, ...]
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -362,13 +391,93 @@ def worksite_sh_dir(worksite: Path) -> Path:
 
 
 @deal.pure
+def parse_task_spec(frontmatter: dict[str, Any]) -> TaskSpec:
+    """Convert raw TASK.md frontmatter dict to a typed TaskSpec.
+
+    Missing fields get safe defaults so old-style tasks continue to work.
+    """
+    raw_deps = frontmatter.get("depends_on") or []
+    raw_deliverables = frontmatter.get("deliverables") or []
+    raw_refs = frontmatter.get("references") or []
+
+    deliverables = tuple(
+        Deliverable(
+            path=str(d["path"]),
+            description=str(d.get("description", "")),
+        )
+        if isinstance(d, dict)
+        else Deliverable(path=str(d))
+        for d in raw_deliverables
+    )
+
+    return TaskSpec(
+        title=str(frontmatter.get("title", "")),
+        workflow=str(frontmatter.get("workflow", "")),
+        depends_on=tuple(str(s) for s in raw_deps),
+        deliverables=deliverables,
+        refine_on_deps_complete=bool(frontmatter.get("refine_on_deps_complete", False)),
+        references=tuple(str(r) for r in raw_refs),
+    )
+
+
+@deal.pure
+def deps_satisfied(task_spec: TaskSpec, all_states: Mapping[str, str]) -> bool:
+    """True if every slug in ``depends_on`` maps to ``"done"`` in all_states."""
+    return all(all_states.get(slug) == "done" for slug in task_spec.depends_on)
+
+
+@deal.pure
+def plan_downstream_transitions(
+    done_slug: str,
+    all_specs: Mapping[str, TaskSpec],
+) -> tuple[DownstreamAction, ...]:
+    """Compute what to do for each downstream task when *done_slug* completes.
+
+    Returns one ``DownstreamAction`` per task whose ``depends_on`` contains
+    *done_slug*. The action is determined by the downstream task's
+    ``refine_on_deps_complete`` flag.
+    """
+    upstream_spec = all_specs.get(done_slug)
+    upstream_deliverables = upstream_spec.deliverables if upstream_spec else ()
+
+    actions: list[DownstreamAction] = []
+    for slug, spec in all_specs.items():
+        if done_slug in spec.depends_on:
+            action: Literal["leave_active", "block_for_rebrief"] = (
+                "leave_active" if spec.refine_on_deps_complete else "block_for_rebrief"
+            )
+            actions.append(
+                DownstreamAction(
+                    task_slug=slug,
+                    action=action,
+                    upstream_deliverables=upstream_deliverables,
+                )
+            )
+    return tuple(actions)
+
+
+@deal.pure
+def check_deliverables(spec: TaskSpec, existing_paths: frozenset[str]) -> tuple[str, ...]:
+    """Return paths of deliverables that are missing from *existing_paths*."""
+    return tuple(d.path for d in spec.deliverables if d.path not in existing_paths)
+
+
+@deal.pure
 def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task | None:
-    """Priority: CORRECTION.md exists > active non-blocked > lowest slug.
+    """Priority: CORRECTION.md exists > active + deps met > lowest slug.
 
     ``corrections`` is the pre-computed set of task slugs that have a
     CORRECTION.md on disk — the shell caller performs that I/O.
+
+    A task is only a candidate if it is ``active`` AND its ``depends_on``
+    slugs are all ``done`` (or it has no spec / no deps).
     """
-    candidates = [t for t in tasks if t.state.status == "active"]
+    all_states: dict[str, str] = {t.slug: t.state.status for t in tasks}
+    candidates = [
+        t
+        for t in tasks
+        if t.state.status == "active" and (t.spec is None or deps_satisfied(t.spec, all_states))
+    ]
     if not candidates:
         return None
     # tasks with CORRECTION.md take priority
@@ -743,7 +852,7 @@ def _slugify(text: str) -> str:
 
 @dataclass(frozen=True)
 class TickPlan:
-    kind: Literal["no_tasks", "no_active", "block", "run"]
+    kind: Literal["no_tasks", "no_active", "waiting_on_deps", "block", "run"]
     block_task_slug: str | None = None
     block_reason: str | None = None
     run_task_slug: str | None = None
@@ -771,6 +880,15 @@ def plan_tick(
 
     task = pick_next_task(tasks, corrections)
     if task is None:
+        # Distinguish: truly no active tasks vs active but deps unmet
+        has_active_with_unmet_deps = any(
+            t.state.status == "active"
+            and t.spec is not None
+            and not deps_satisfied(t.spec, {tt.slug: tt.state.status for tt in tasks})
+            for t in tasks
+        )
+        if has_active_with_unmet_deps:
+            return TickPlan(kind="waiting_on_deps")
         return TickPlan(kind="no_active")
 
     # session cap check before spending

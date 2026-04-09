@@ -50,6 +50,18 @@ to it — the plan-writer or the user confirms it. You do not write code or a pl
   If one or more `[needs user]` questions are scope-critical and unanswerable from
   the codebase, set `status=blocked` and list those questions in `blocked_reason`.
 
+## Autonomy and boundaries
+
+TASK.md may contain `## Autonomy` and `## Boundaries` sections.
+
+- **Boundaries**: do not explore or propose changes to files or systems listed there.
+- **Autonomy — pre-authorized**: decisions listed here need not be surfaced as
+  clarifying questions. Treat them as settled.
+- **Autonomy — must block**: if your brainstorm reaches one of these decision points,
+  write `BLOCKED.md` in the task folder explaining the decision needed, set
+  `status=blocked` and `blocked_reason=critical_question` in STATE.md, and end
+  the session.
+
 ## Stay in lane
 
 - Do not write a plan, pseudocode, or implementation steps — that is plan-writer's job.

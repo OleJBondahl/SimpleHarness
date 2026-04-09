@@ -71,6 +71,19 @@ those always go to Haiku.
   `next_role=plan-writer` and explain in `blocked_reason`. Do not set
   `status=blocked` for a single failing step — only for a plan-level breakdown.
 
+## Autonomy and boundaries
+
+TASK.md may contain `## Autonomy` and `## Boundaries` sections.
+
+- **Boundaries**: do not modify files or systems listed there. Brief each Sonnet
+  subagent with the boundaries so they respect them too.
+- **Autonomy — pre-authorized**: decisions listed here can be made during
+  implementation without blocking. Note the pre-authorization in your log.
+- **Autonomy — must block**: if implementation requires one of these decisions, write
+  `BLOCKED.md` in the task folder explaining the decision needed, set
+  `status=blocked` and `blocked_reason=critical_question` in STATE.md, and end
+  the session.
+
 ## Stay in lane
 
 - Do not rewrite the plan — if you find a gap, note it in your log and loop back

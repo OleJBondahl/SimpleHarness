@@ -58,6 +58,30 @@ the baton), or `status=blocked` with a clear `blocked_reason`. If none of
 these is set, the harness will loop you back on the next tick — which
 usually wastes a session on indecision. Make the call.
 
+## Autonomy and boundaries
+
+TASK.md may contain `## Autonomy` and `## Boundaries` sections.
+
+- **Boundaries**: do not modify files or systems listed there. Enforce this on all
+  downstream roles when deciding who runs next.
+- **Autonomy — pre-authorized**: decisions listed here can be made by any role without
+  blocking. When briefing the next role, remind them of relevant pre-authorized items.
+- **Autonomy — must block**: if you encounter one of these decisions, write `BLOCKED.md`
+  in the task folder explaining the decision needed, set `status=blocked` and
+  `blocked_reason=critical_question` in STATE.md, and end the session.
+
+## Dependencies and deliverables
+
+- At **kickoff**, check TASK.md frontmatter for `depends_on` and `references`. Delegate
+  a Haiku subagent to read the referenced files (these are the authoritative inputs).
+- At **wrap-up**, verify every path listed in `deliverables` frontmatter exists in the
+  worksite. If any are missing, investigate why before marking done. Do not mark done
+  with missing deliverables.
+- If `refine_on_deps_complete: true` on a downstream task that lists this task in its
+  `depends_on`, append a fenced `## Refinement from <this-task-slug>` section to that
+  downstream task's TASK.md with concrete details from your deliverables. Keep the
+  original brief intact above the fence.
+
 ## Special powers (privileged)
 
 You are the ONLY role allowed to edit files under `<toolbox>/roles/`,
