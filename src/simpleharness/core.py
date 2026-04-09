@@ -59,16 +59,16 @@ DEFAULT_BASH_ALLOW: list[str] = [
 ]
 
 
-@dataclass
+@dataclass(frozen=True)
 class Permissions:
     mode: str = "safe"
     approver_model: str = "sonnet"
     escalate_denials_to_correction: bool = False
-    extra_bash_allow: list[str] = field(default_factory=list)
-    extra_tools_allow: list[str] = field(default_factory=list)
+    extra_bash_allow: tuple[str, ...] = field(default_factory=tuple)
+    extra_tools_allow: tuple[str, ...] = field(default_factory=tuple)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Config:
     model: str = "opus"
     idle_sleep_seconds: int = 30
@@ -80,14 +80,14 @@ class Config:
     permissions: Permissions = field(default_factory=Permissions)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Role:
     name: str
     body: str  # the system prompt body (frontmatter stripped)
     description: str = ""
     model: str | None = None
     max_turns: int | None = None
-    allowed_tools: list[str] = field(default_factory=list)
+    allowed_tools: tuple[str, ...] = field(default_factory=tuple)
     privileged: bool = False
     source_path: Path | None = None
 
@@ -359,8 +359,10 @@ as described in your role instructions.
 @deal.pure
 def _build_allowlist(role: Role, config: Config) -> str:
     """Construct the --allowedTools value shared by safe and approver modes."""
-    tools = DEFAULT_TOOLS_ALLOW + role.allowed_tools + config.permissions.extra_tools_allow
-    bash_patterns = DEFAULT_BASH_ALLOW + config.permissions.extra_bash_allow
+    tools = (
+        DEFAULT_TOOLS_ALLOW + list(role.allowed_tools) + list(config.permissions.extra_tools_allow)
+    )
+    bash_patterns = DEFAULT_BASH_ALLOW + list(config.permissions.extra_bash_allow)
     dedup_tools = list(dict.fromkeys(tools))
     return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
 

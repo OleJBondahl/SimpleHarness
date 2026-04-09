@@ -3,21 +3,21 @@ repos:
     hooks:
       - id: ruff-check
         name: ruff check
-        entry: uvx ruff check --force-exclude
+        entry: uv run ruff check --force-exclude
         language: system
         types_or: [python, pyi]
         require_serial: true
 
       - id: ruff-format
         name: ruff format (check)
-        entry: uvx ruff format --check --force-exclude
+        entry: uv run ruff format --check --force-exclude
         language: system
         types_or: [python, pyi]
         require_serial: true
 
       - id: ty-check
         name: ty check
-        entry: uvx ty check
+        entry: uv run ty check
         language: system
         types_or: [python, pyi]
         pass_filenames: false
@@ -27,5 +27,12 @@ repos:
         name: deal lint (FP purity)
         entry: uv run python -X utf8 -m deal lint
         language: system
-        types: [python]
+        files: ^src/simpleharness/(core|approver_core)\.py$
         pass_filenames: true
+
+      - id: fp-purity-gate
+        name: FP purity gate (every def in core must have @deal.pure)
+        entry: uv run python -X utf8 scripts/check_fp_purity.py src/simpleharness/core.py src/simpleharness/approver_core.py
+        language: system
+        pass_filenames: false
+        files: ^(src/simpleharness/(core|approver_core)\.py|scripts/check_fp_purity\.py)$

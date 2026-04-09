@@ -119,8 +119,8 @@ def load_config(worksite: Path) -> Config:
         mode=mode,
         approver_model=approver_model,
         escalate_denials_to_correction=escalate,
-        extra_bash_allow=list(perms_raw.get("extra_bash_allow", []) or []),
-        extra_tools_allow=list(perms_raw.get("extra_tools_allow", []) or []),
+        extra_bash_allow=tuple(perms_raw.get("extra_bash_allow", []) or []),
+        extra_tools_allow=tuple(perms_raw.get("extra_tools_allow", []) or []),
     )
     return Config(
         model=str(merged.get("model", "opus")),
@@ -145,7 +145,7 @@ def load_role(name: str) -> Role:
         description=str(meta.get("description", "")),
         model=meta.get("model"),
         max_turns=meta.get("max_turns"),
-        allowed_tools=list(meta.get("allowed_tools", []) or []),
+        allowed_tools=tuple(meta.get("allowed_tools", []) or []),
         privileged=bool(meta.get("privileged", False)),
         source_path=path,
     )
