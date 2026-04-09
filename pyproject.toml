@@ -11,15 +11,16 @@ dependencies = [
 ]
 
 [project.scripts]
-simpleharness = "harness:main"
-simpleharness-approver-hook = "simpleharness_approver_hook:main"
+simpleharness = "simpleharness.shell:main"
+simpleharness-approver-hook = "simpleharness.approver_shell:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["harness", "simpleharness_core", "simpleharness_approver_hook"]
+package-dir = {"" = "src"}
+packages = ["simpleharness"]
 
 [tool.ruff]
 line-length = 100
@@ -31,4 +32,12 @@ extend-select = ["I", "B", "UP", "SIM", "RUF"]
 [dependency-groups]
 dev = [
     "deal>=4.24.6",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.9",
+    "ty>=0.0.29",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"

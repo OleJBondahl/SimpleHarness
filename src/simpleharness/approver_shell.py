@@ -25,8 +25,6 @@ import datetime as _dt
 import json
 import os
 import queue
-import re
-import shlex
 import subprocess
 import sys
 import threading
@@ -34,205 +32,23 @@ import time
 from pathlib import Path
 from typing import Any
 
-from simpleharness_core import (
+from simpleharness.approver_core import (
+    _SLUG_RE,
+    ApproverEnv,
+    Verdict,
+    _deny_synthetic,
+    _extract_assistant_text,
+    _task_dir,
+    finalize_review,
+    parse_verdict,
+    plan_review,
+)
+from simpleharness.core import toolbox_root
+from simpleharness.shell import (
     load_config,
     load_role,
     persist_approver_allow,
-    toolbox_root,
 )
-
-# ────────────────────────────────────────────────────────────────────────────
-# Core — pure functions, no I/O
-# ────────────────────────────────────────────────────────────────────────────
-
-_WRAPPER_COMMANDS: frozenset[str] = frozenset(
-    {"sudo", "doas", "env", "time", "nice", "ionice", "xargs", "nohup", "timeout"}
-)
-
-_WRAPPER_FLAG_RE = re.compile(r"^-")
-_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-# Defense-in-depth: SIMPLEHARNESS_TASK_SLUG is meant to be the kebab-case
-# slug produced by ``simpleharness new``. Reject anything that could
-# traverse out of the task dir (``..``, ``/``, ``\``) before we use it
-# to construct paths.
-_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-
-_WRAPPER_FLAGS_WITH_VALUE: frozenset[str] = frozenset(
-    {"-u", "-g", "-h", "-p", "-D", "-C", "-T", "-r", "-t", "--user", "--group"}
-)
-
-
-@dataclasses.dataclass(frozen=True)
-class ApproverEnv:
-    worksite: Path
-    task_slug: str
-    role: str
-    approver_model: str
-    stream_log: Path | None
-    fake: bool
-    timeout_s: float
-
-
-@dataclasses.dataclass(frozen=True)
-class Verdict:
-    decision: str  # "allow" | "deny"
-    pattern: str  # "" on deny
-    reason: str
-
-
-def unwrap_wrappers(tokens: list[str], max_depth: int = 8) -> list[str]:
-    """Strip sudo/env/time-style wrappers from a tokenized command.
-
-    Returns the tokens starting at the real base command. Bounded
-    recursion so pathological `sudo sudo sudo ...` cannot loop.
-    """
-    cur = tokens[:]
-    for _ in range(max_depth):
-        if not cur:
-            return cur
-        head = cur[0]
-        if head not in _WRAPPER_COMMANDS:
-            return cur
-        cur = cur[1:]
-        while cur:
-            tok = cur[0]
-            if tok in _WRAPPER_FLAGS_WITH_VALUE:
-                cur = cur[2:] if len(cur) >= 2 else []
-                continue
-            if _WRAPPER_FLAG_RE.match(tok) or _ENV_ASSIGN_RE.match(tok):
-                cur = cur[1:]
-                continue
-            break
-    return cur
-
-
-def command_signature(command: str) -> str:
-    """Return the base-command signature for e.g. FAKE-mode pattern synthesis.
-
-    Uses shlex.split(posix=False) on Windows for better handling of
-    backslashes; then unwraps sudo/env/etc. Always returns a non-empty
-    string so the caller can always key off it.
-    """
-    if not isinstance(command, str):
-        return "Bash"
-    raw = command.strip()
-    if not raw:
-        return "Bash"
-    try:
-        parts = shlex.split(raw, posix=(os.name != "nt"))
-    except ValueError:
-        parts = raw.split()
-    if not parts:
-        return "Bash"
-    unwrapped = unwrap_wrappers(parts)
-    if unwrapped:
-        return unwrapped[0]
-    return parts[0]
-
-
-# Last fenced JSON code block wins — models sometimes show a draft in
-# an earlier block then commit to a final one at the bottom.
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL | re.IGNORECASE)
-
-
-def _deny_synthetic(reason: str) -> Verdict:
-    return Verdict(decision="deny", pattern="", reason=reason)
-
-
-def parse_verdict(final_message: str) -> Verdict:
-    """Extract and validate the approver's JSON verdict.
-
-    On any parse failure (no block, bad JSON, missing fields, invalid
-    decision enum, non-string reason), returns a synthetic deny Verdict
-    with a diagnostic reason. Never raises.
-    """
-    if not isinstance(final_message, str) or not final_message.strip():
-        return _deny_synthetic("approver returned empty message")
-
-    matches = _JSON_BLOCK_RE.findall(final_message)
-    if not matches:
-        tail = final_message.strip()
-        if tail.startswith("{") and tail.endswith("}"):
-            matches = [tail]
-    if not matches:
-        snippet = final_message.strip()[-120:]
-        return _deny_synthetic(f"approver returned malformed verdict: {snippet!r}")
-
-    raw = matches[-1].strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        return _deny_synthetic(f"approver returned malformed verdict: {e}")
-
-    if not isinstance(data, dict):
-        return _deny_synthetic("approver verdict was not a JSON object")
-
-    decision = data.get("decision")
-    pattern = data.get("pattern", "")
-    reason = data.get("reason", "")
-
-    if decision not in ("allow", "deny"):
-        return _deny_synthetic(f"approver verdict had invalid decision: {decision!r}")
-    if not isinstance(pattern, str):
-        return _deny_synthetic("approver verdict pattern was not a string")
-    if not isinstance(reason, str):
-        return _deny_synthetic("approver verdict reason was not a string")
-    if decision == "allow" and not pattern.strip():
-        return _deny_synthetic("approver allow verdict had empty pattern")
-    if not reason.strip():
-        return _deny_synthetic("approver verdict had empty reason")
-
-    return Verdict(decision=decision, pattern=pattern, reason=reason)
-
-
-def build_approver_prompt(
-    tool_name: str,
-    tool_input: dict[str, Any],
-    role: str,
-    task_slug: str,
-    stream_tail: str,
-    currently_approved: list[str],
-) -> str:
-    """Assemble the compact prompt handed to the child ``claude -p`` approver."""
-    input_pretty = json.dumps(tool_input, indent=2, sort_keys=True, default=str)
-    if currently_approved:
-        approved_block = "\n".join(f"- `{p}`" for p in currently_approved)
-    else:
-        approved_block = "(none — this worksite has no approver-added patterns yet)"
-    return (
-        "# Tool call awaiting approval\n"
-        f"Tool: `{tool_name}`\n"
-        "Arguments:\n"
-        f"```json\n{input_pretty}\n```\n"
-        "\n"
-        "# Working agent context\n"
-        f"Role: `{role}`\n"
-        f"Task: `{task_slug}`\n"
-        "\n"
-        "## Recent assistant-text tail from the working agent's stream log\n"
-        f"```\n{stream_tail}\n```\n"
-        "\n"
-        "# Currently approved extra_bash_allow patterns in this worksite\n"
-        f"{approved_block}\n"
-        "\n"
-        "Now follow the approver role body and emit your single JSON verdict "
-        "block as your final message.\n"
-    )
-
-
-def fake_verdict_from_input(tool_name: str, tool_input: dict[str, Any]) -> Verdict:
-    """FAKE-mode shortcut: invent an allow verdict keyed off the base command."""
-    if tool_name == "Bash":
-        sig = command_signature(
-            tool_input.get("command", "") if isinstance(tool_input, dict) else ""
-        )
-        pattern = f"{sig} *"
-    else:
-        sig = tool_name
-        pattern = sig
-    return Verdict(decision="allow", pattern=pattern, reason=f"FAKE mode: auto-approved {sig}")
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # Shell — I/O, subprocess, env
@@ -300,29 +116,6 @@ def _load_env() -> ApproverEnv | str:
         fake=fake,
         timeout_s=timeout_s,
     )
-
-
-def _extract_assistant_text(obj: Any) -> str:
-    """Pull assistant text content out of one Claude Code stream-json event."""
-    if not isinstance(obj, dict):
-        return ""
-    if obj.get("type") != "assistant":
-        return ""
-    msg = obj.get("message")
-    if not isinstance(msg, dict):
-        return ""
-    content = msg.get("content")
-    if not isinstance(content, list):
-        return ""
-    chunks: list[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "text":
-            t = block.get("text")
-            if isinstance(t, str) and t.strip():
-                chunks.append(t.strip())
-    return "\n".join(chunks)
 
 
 def _read_stream_tail(log_path: Path | None, n_lines: int = 30) -> str:
@@ -560,19 +353,12 @@ def _escalate_denial(
         _stderr(f"failed to append to CORRECTION.md: {e}")
 
 
-def _task_dir(worksite: Path, task_slug: str) -> Path:
-    return worksite / "simpleharness" / "tasks" / task_slug
-
-
 def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Verdict:
-    """Top-level slow-path pipeline.
+    """Top-level slow-path pipeline — thin coordinator.
 
-    1. Load config + approver role.
-    2. Read stream tail.
-    3. FAKE mode: synthesize verdict; else build prompt + spawn + parse.
-    4. On allow: persist pattern + refresh fast-path allowlist.
-    5. On deny: maybe escalate to CORRECTION.md.
+    Gather inputs → plan (pure) → dispatch → finalize (pure) → side effects.
     """
+    # ── gather ────────────────────────────────────────────────────────────────
     try:
         cfg = load_config(env.worksite)
     except Exception as e:
@@ -585,26 +371,27 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
         _stderr(f"load_role('approver') failed: {e}")
         return _deny_synthetic(f"approver role missing or invalid: {e}")
 
-    # Belt-and-braces: construct the exact path the spawn will pass to
-    # ``--append-system-prompt-file`` and verify it exists here so we
-    # never silently spawn a child with a bogus prompt file.
     role_path = toolbox_root() / "roles" / "approver.md"
-    if not role_path.is_file():
-        return _deny_synthetic(f"approver role file not found at {role_path}")
-
     stream_tail = _read_stream_tail(env.stream_log)
 
-    prompt = build_approver_prompt(
-        tool_name=tool_name,
-        tool_input=tool_input,
-        role=env.role,
-        task_slug=env.task_slug,
+    # ── plan (pure) ───────────────────────────────────────────────────────────
+    _plan = plan_review(
+        env,
+        tool_name,
+        tool_input,
+        cfg,
+        role_file_exists=role_path.is_file(),
         stream_tail=stream_tail,
-        currently_approved=list(cfg.permissions.extra_bash_allow),
+        currently_approved=tuple(cfg.permissions.extra_bash_allow),
     )
 
-    if env.fake:
-        verdict = fake_verdict_from_input(tool_name, tool_input)
+    # ── dispatch ──────────────────────────────────────────────────────────────
+    if _plan.preemptive_deny:
+        return _deny_synthetic(_plan.preemptive_deny)
+
+    if _plan.fake_verdict is not None:
+        verdict = _plan.fake_verdict
+        # side effect: write fake log
         try:
             task_log_dir = _approver_log_dir(env.worksite, env.task_slug)
             (task_log_dir / f"approver-{_now_stamp()}-fake.jsonl").write_text(
@@ -614,7 +401,7 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
                         "tool_name": tool_name,
                         "tool_input": tool_input,
                         "verdict": dataclasses.asdict(verdict),
-                        "prompt_len": len(prompt),
+                        "prompt_len": len(_plan.prompt),
                     }
                 )
                 + "\n",
@@ -623,15 +410,18 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
         except OSError as e:
             _stderr(f"failed to write fake approver log: {e}")
     else:
+        if _plan.spawn is None:
+            return _deny_synthetic("internal error: review plan missing spawn request")
+        # Shell builds the real role_path for spawn (plan only has a placeholder)
         try:
             task_log_dir = _approver_log_dir(env.worksite, env.task_slug)
             final_msg = _spawn_approver(
-                prompt=prompt,
-                approver_model=env.approver_model,
+                prompt=_plan.spawn.prompt,
+                approver_model=_plan.spawn.approver_model,
                 approver_role_path=role_path,
                 task_log_dir=task_log_dir,
-                worksite=env.worksite,
-                timeout_s=env.timeout_s,
+                worksite=_plan.spawn.worksite,
+                timeout_s=_plan.spawn.timeout_s,
             )
         except FileNotFoundError:
             return _deny_synthetic("approver could not be spawned: 'claude' not on PATH")
@@ -646,25 +436,27 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
             return _deny_synthetic(f"approver spawn failed: {e}")
         verdict = parse_verdict(final_msg)
 
-    if verdict.decision == "allow":
-        pattern = verdict.pattern
-        # Persist the pattern to config.yaml AND refresh the fast-path
-        # allowlist under a single shared lock so concurrent approver
-        # processes cannot race and drop patterns from the allowlist
-        # file. Config write is best-effort: on failure we still allow
-        # the current call so the working agent isn't blocked.
+    # ── finalize (pure) + side effects ────────────────────────────────────────
+    outcome = finalize_review(verdict, cfg)
+
+    if outcome.pattern_to_persist:
         try:
-            persist_approver_allow(env.worksite, pattern, _task_dir(env.worksite, env.task_slug))
+            persist_approver_allow(
+                env.worksite,
+                outcome.pattern_to_persist,
+                _task_dir(env.worksite, env.task_slug),
+            )
         except Exception as e:
             _stderr(f"persist_approver_allow failed: {e}")
-        _stderr(f"allow: pattern={pattern!r} reason={verdict.reason!r}")
-        return verdict
+        _stderr(f"allow: pattern={outcome.pattern_to_persist!r} reason={verdict.reason!r}")
 
-    # deny
-    _stderr(f"deny: reason={verdict.reason!r}")
-    if cfg.permissions.escalate_denials_to_correction:
+    if outcome.should_escalate:
         _escalate_denial(env.worksite, env.task_slug, tool_name, tool_input, verdict.reason)
-    return verdict
+
+    if verdict.decision == "deny":
+        _stderr(f"deny: reason={verdict.reason!r}")
+
+    return outcome.verdict
 
 
 def main() -> None:
@@ -698,9 +490,6 @@ def main() -> None:
 
         try:
             verdict = _review(env, tool_name, tool_input)
-        except ApproverTimeout as exc:
-            _emit("deny", f"approver timed out: {exc}")
-            return
         except Exception as exc:
             _stderr(f"hook internal error: {exc!r}")
             _emit("deny", f"approver hook internal error: {type(exc).__name__}: {exc}")
