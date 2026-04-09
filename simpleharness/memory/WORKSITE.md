@@ -16,25 +16,17 @@ Long-term notes that every session can read.
 - **Pre-merge gates (not yet run):** `shellcheck`, `docker compose config`, `docker compose build` — blocked by session permissions in all phases. Must run manually before merging.
 - Branch is 13 commits ahead of `origin/feature/dev-container`.
 
-## Task 003 — CLI error classifier and retry backoff (in progress)
+## Task 003 — CLI error classifier and retry backoff (developer complete)
 
-- **Brainstorm complete.** All four "must block" conditions verified clear:
-  - Watch loop supports per-task skip via `plan_tick` filter (~5 lines, not a refactor)
-  - STATE.md parser is additive — new optional fields `retry_count`/`retry_after` with defaults
-  - Classifier data already captured — `exit_code` from `proc.returncode`, error text from `.jsonl` stream log
-  - Approver hook unaffected — retry logic is post-session path
-- **Recommended approach:** maximal purity (Approach A). Classifier, backoff computation, and state transitions all go in `core.py` with `@deal.pure`. Shell layer only extracts error text from `.jsonl` log.
-- **Key integration points:**
-  - `core.py`: new `ClassifyResult` type, `classify_cli_error()`, backoff schedule, extend `compute_post_session_state`
-  - `core.py State`: add `retry_count: int = 0`, `retry_after: str | None = None`
-  - `io.py`: extend `read_state`/`write_state` + `_STATE_FIELD_ORDER`
-  - `shell.py tick_once`: extract error text post-session, call classifier, pass to compute function; add `retry_after` filter in `plan_tick`
-- **Plan complete** (`02-plan.md`): 7-task TDD plan, Sonnet-reviewed. Key design choices:
-  - `now: datetime` added to `pick_next_task` and `plan_tick` signatures (pure backoff filtering)
-  - New `TickPlan` kind `"all_backoff"` for when all candidates are in backoff
-  - `classify_result` is keyword-only on `compute_post_session_state` (backward-compatible)
-  - Error text extracted from `.jsonl` log in shell, not from `SessionResult`
-- **Risk to watch:** `@deal.pure` may flag `datetime.fromisoformat` or module-level `re.compile` constants — see risk #1 in plan
-- **Existing test call-sites:** all `plan_tick()` and `pick_next_task()` calls in tests must gain a `now` arg (Task 5 Step 6)
-- Next: developer implements the plan.
-- Branch: `feature/dev-container` (same as tasks 001/002).
+- **Implementation complete.** 7 commits on `feature/dev-container`, 329 tests passing.
+- **What was built:**
+  - `State` dataclass: `retry_count` (int) and `retry_after` (ISO str | None) fields, roundtrip through `io.py`
+  - `ClassifyResult` dataclass + `classify_cli_error` pure function: regex pattern table maps error text to `usage_limit | transient | fatal`
+  - `compute_backoff_delay`: fixed schedule `(30, 60, 120, 240, 300)` seconds
+  - `compute_post_session_state` extended: clears retry on success, bumps on transient, parks on usage_limit, blocks on fatal
+  - `pick_next_task` and `plan_tick` gain `now: datetime` param for backoff-aware filtering; new `all_backoff` TickPlan kind
+  - `shell.py`: `_extract_error_text` reads `.jsonl` logs, classifier wired into `tick_once`
+- **Security review fixes:** timezone-naive comparison (appends Z), malformed retry_after handling (`_parse_retry_after`), tightened timeout pattern
+- **Known low-priority items:** ReDoS potential in usage-limit regex (bounded by real CLI message lengths), unbounded `.jsonl` read (acceptable for current sizes), no length cap on `blocked_reason`
+- Next: project-leader reviews and wraps up.
+- Branch: `feature/dev-container`.
