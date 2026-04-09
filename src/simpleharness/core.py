@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import deal
 import yaml
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ class Role:
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
 
+@deal.has()
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Parse a markdown file with YAML frontmatter. Returns (metadata, body).
 
@@ -124,11 +126,13 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 _TOOLBOX_ROOT: Path = Path(__file__).resolve().parent
 
 
+@deal.pure
 def toolbox_root() -> Path:
     """The toolbox repo root (where this module lives)."""
     return _TOOLBOX_ROOT
 
 
+@deal.pure
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
@@ -216,10 +220,12 @@ DEFAULT_TOOLS_ALLOW: list[str] = [
 ]
 
 
+@deal.pure
 def worksite_sh_dir(worksite: Path) -> Path:
     return worksite / "simpleharness"
 
 
+@deal.pure
 def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task | None:
     """Priority: CORRECTION.md exists > active non-blocked > lowest slug.
 
@@ -236,6 +242,7 @@ def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task |
     return sorted(candidates, key=lambda t: t.slug)[0]
 
 
+@deal.pure
 def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
     """Hybrid: STATE.next_role wins if set, else advance along workflow.phases.
 
@@ -261,6 +268,7 @@ def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
     return phases[idx + 1]
 
 
+@deal.pure
 def build_session_prompt(
     task: Task,
     role: Role,
@@ -348,19 +356,24 @@ as described in your role instructions.
     return prompt
 
 
+@deal.pure
 def _build_allowlist(role: Role, config: Config) -> str:
     """Construct the --allowedTools value shared by safe and approver modes."""
     tools = DEFAULT_TOOLS_ALLOW + role.allowed_tools + config.permissions.extra_tools_allow
     bash_patterns = DEFAULT_BASH_ALLOW + config.permissions.extra_bash_allow
     seen: set[str] = set()
-    dedup_tools: list[str] = []
-    for t in tools:
-        if t not in seen:
-            seen.add(t)
-            dedup_tools.append(t)
+
+    def _dedup(t: str) -> bool:
+        if t in seen:
+            return False
+        seen.add(t)
+        return True
+
+    dedup_tools = [t for t in tools if _dedup(t)]
     return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
 
 
+@deal.pure
 def build_claude_cmd(
     prompt_file: Path,
     role: Role,
@@ -410,6 +423,7 @@ def build_claude_cmd(
     return cmd
 
 
+@deal.pure
 def _format_tool_call(tname: str, tinput: dict[str, Any]) -> str:
     """Return a short human-readable summary of a tool_use block's input.
 
@@ -434,6 +448,7 @@ def _format_tool_call(tname: str, tinput: dict[str, Any]) -> str:
     return json.dumps(tinput, ensure_ascii=False)[:200]
 
 
+@deal.pure
 def _slugify(text: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9\s-]", "", text).strip().lower()
     s = re.sub(r"[\s_-]+", "-", s)
@@ -454,6 +469,7 @@ class TickPlan:
     run_role_name: str | None = None
 
 
+@deal.pure
 def plan_tick(
     tasks: tuple[Task, ...],
     workflows_by_name: Mapping[str, Workflow | None],
@@ -528,6 +544,7 @@ def plan_tick(
 # ────────────────────────────────────────────────────────────────────────────
 
 
+@deal.pure
 def compute_post_session_state(
     state: State,
     role_name: str,

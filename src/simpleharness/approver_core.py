@@ -14,6 +14,8 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+import deal
+
 # ────────────────────────────────────────────────────────────────────────────
 # Constants
 # ────────────────────────────────────────────────────────────────────────────
@@ -69,6 +71,7 @@ class Verdict:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+@deal.pure
 def unwrap_wrappers(tokens: list[str], max_depth: int = 8) -> list[str]:
     """Strip sudo/env/time-style wrappers from a tokenized command.
 
@@ -95,6 +98,7 @@ def unwrap_wrappers(tokens: list[str], max_depth: int = 8) -> list[str]:
     return cur
 
 
+@deal.has()
 def command_signature(command: str) -> str:
     """Return the base-command signature for e.g. FAKE-mode pattern synthesis.
 
@@ -119,10 +123,12 @@ def command_signature(command: str) -> str:
     return parts[0]
 
 
+@deal.pure
 def _deny_synthetic(reason: str) -> Verdict:
     return Verdict(decision="deny", pattern="", reason=reason)
 
 
+@deal.has()
 def parse_verdict(final_message: str) -> Verdict:
     """Extract and validate the approver's JSON verdict.
 
@@ -169,6 +175,7 @@ def parse_verdict(final_message: str) -> Verdict:
     return Verdict(decision=decision, pattern=pattern, reason=reason)
 
 
+@deal.pure
 def build_approver_prompt(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -204,6 +211,7 @@ def build_approver_prompt(
     )
 
 
+@deal.has()
 def fake_verdict_from_input(tool_name: str, tool_input: dict[str, Any]) -> Verdict:
     """FAKE-mode shortcut: invent an allow verdict keyed off the base command."""
     if tool_name == "Bash":
@@ -217,6 +225,7 @@ def fake_verdict_from_input(tool_name: str, tool_input: dict[str, Any]) -> Verdi
     return Verdict(decision="allow", pattern=pattern, reason=f"FAKE mode: auto-approved {sig}")
 
 
+@deal.pure
 def _extract_assistant_text(obj: Any) -> str:
     """Pull assistant text content out of one Claude Code stream-json event."""
     if not isinstance(obj, dict):
@@ -240,6 +249,7 @@ def _extract_assistant_text(obj: Any) -> str:
     return "\n".join(chunks)
 
 
+@deal.pure
 def _task_dir(worksite: Path, task_slug: str) -> Path:
     return worksite / "simpleharness" / "tasks" / task_slug
 
@@ -294,6 +304,7 @@ class ReviewOutcome:
 # ────────────────────────────────────────────────────────────────────────────
 
 
+@deal.has()
 def plan_review(
     env: ApproverEnv,
     tool_name: str,
@@ -338,6 +349,7 @@ def plan_review(
     return ReviewPlan(spawn=spawn, prompt=prompt)
 
 
+@deal.pure
 def finalize_review(verdict: Verdict, cfg: Any) -> ReviewOutcome:
     """Map a parsed Verdict to action intents the shell will execute.
 
