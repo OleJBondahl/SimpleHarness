@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 .coverage
+.pytest_cache/
 
 # uv cache (keep uv.lock checked in — it pins versions)
 .python-version

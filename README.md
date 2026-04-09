@@ -82,8 +82,8 @@ interactively.
 
 SimpleHarness uses a two-repo split:
 
-- **Toolbox** (this repo): holds `harness.py`, `roles/*.md`, `workflows/*.md`,
-  and `config.yaml`. Installed once globally. Contains the "brain".
+- **Toolbox** (this repo): holds the harness source, `src/simpleharness/roles/*.md`, `src/simpleharness/workflows/*.md`,
+  and `src/simpleharness/config.yaml`. Installed once globally. Contains the "brain".
 - **Worksite**: any git repo you `cd` into and run `simpleharness` from. All
   task state, logs, memory, and corrections live inside that worksite's own
   `simpleharness/` folder. Running multiple worksites is safe — each has its
@@ -108,7 +108,7 @@ toolbox-level work at a time to avoid commit conflicts.
 
 ## Configuration
 
-Defaults live in `config.yaml` at the toolbox root. Per-worksite overrides
+Defaults live in `src/simpleharness/config.yaml`. Per-worksite overrides
 go in `<worksite>/simpleharness/config.yaml` (only the fields you want to
 change; the rest fall through).
 
@@ -143,21 +143,26 @@ To extend the allowlist without going dangerous, add patterns to
 
 ```
 SimpleHarness/
-├── intent.md                         # the original vision
 ├── pyproject.toml                    # uv-managed, Python 3.13
 ├── README.md                         # this file
-├── harness.py                        # the tool
-├── config.yaml                       # toolbox defaults
-├── roles/                            # role definitions (markdown)
-│   ├── project-leader.md
-│   ├── brainstormer.md
-│   ├── plan-writer.md
-│   └── developer.md
-├── subagents/                        # subagent definitions (Claude Code .claude/agents format)
-│   └── expert-critic.md
-├── workflows/
-│   ├── universal.md
-│   └── feature-build.md
+├── docs/
+│   ├── intent.md                     # the original vision
+│   ├── dev-container.md
+│   └── skills-for-simpleharness-workflow.md
+├── src/simpleharness/
+│   ├── core.py, shell.py, approver_core.py, approver_shell.py
+│   ├── config.yaml                   # toolbox defaults
+│   ├── simpleharness_approver_hook.sh
+│   ├── roles/                        # role definitions (markdown)
+│   │   ├── project-leader.md
+│   │   ├── brainstormer.md
+│   │   ├── plan-writer.md
+│   │   └── developer.md
+│   ├── subagents/                    # subagent definitions (Claude Code .claude/agents format)
+│   │   └── expert-critic.md
+│   └── workflows/
+│       ├── universal.md
+│       └── feature-build.md
 └── .claude/
     └── settings.json                 # permissions allowlist for interactive debug
 ```

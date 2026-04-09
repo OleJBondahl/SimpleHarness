@@ -1,6 +1,6 @@
 # Skills for the SimpleHarness workflow
 
-Skills that the SimpleHarness-driven workflow should invoke when it is actually **developing and building things for the user** — mapped to the role files in `roles/` and the workflow files in `workflows/`.
+Skills that the SimpleHarness-driven workflow should invoke when it is actually **developing and building things for the user** — mapped to the role files in `src/simpleharness/roles/` and the workflow files in `src/simpleharness/workflows/`.
 
 This file is the authoritative reference for "which skill does which role pull in." When editing a role file, update the mapping here too.
 
@@ -8,23 +8,23 @@ This file is the authoritative reference for "which skill does which role pull i
 
 ## A. Role → skill mapping
 
-Aligned with files currently in `roles/`.
+Aligned with files currently in `src/simpleharness/roles/`.
 
 | Role file | Primary skills | Secondary skills |
 |---|---|---|
-| `roles/brainstormer.md` | `brainstorming`, `jobs-to-be-done`, `problem-framing-canvas` | `opportunity-solution-tree`, `expert-panel` |
-| `roles/plan-writer.md` | `writing-plans` | `brainstorming` (if scope unclear), `using-git-worktrees` |
-| `roles/developer.md` | `test-driven-development`, `executing-plans`, `subagent-driven-development` | `systematic-debugging`, `haiku-delegate`, `dispatching-parallel-agents`, `claude-api` (if SDK work) |
-| `roles/approver.md` | *(no skill — harness approval logic)* | `update-config`, `hookify/writing-rules` (as design reference only) |
-| `roles/project-leader.md` | `roadmap-planning`, `finishing-a-development-branch` | `requesting-code-review`, `updating-memory` |
+| `src/simpleharness/roles/brainstormer.md` | `brainstorming`, `jobs-to-be-done`, `problem-framing-canvas` | `opportunity-solution-tree`, `expert-panel` |
+| `src/simpleharness/roles/plan-writer.md` | `writing-plans` | `brainstorming` (if scope unclear), `using-git-worktrees` |
+| `src/simpleharness/roles/developer.md` | `test-driven-development`, `executing-plans`, `subagent-driven-development` | `systematic-debugging`, `haiku-delegate`, `dispatching-parallel-agents`, `claude-api` (if SDK work) |
+| `src/simpleharness/roles/approver.md` | *(no skill — harness approval logic)* | `update-config`, `hookify/writing-rules` (as design reference only) |
+| `src/simpleharness/roles/project-leader.md` | `roadmap-planning`, `finishing-a-development-branch` | `requesting-code-review`, `updating-memory` |
 
 ## A2. Subagent → skill mapping
 
-Aligned with files currently in `subagents/`. These are invoked inline via the Agent tool, not as separate workflow phases.
+Aligned with files currently in `src/simpleharness/subagents/`. These are invoked inline via the Agent tool, not as separate workflow phases.
 
 | Subagent file | Primary skills | Secondary skills |
 |---|---|---|
-| `subagents/expert-critic.md` | `receiving-code-review`, `expert-panel` | `verification-before-completion`, `systematic-debugging` |
+| `src/simpleharness/subagents/expert-critic.md` | `receiving-code-review`, `expert-panel` | `verification-before-completion`, `systematic-debugging` |
 
 ---
 
@@ -54,9 +54,9 @@ Aligned with `workflows/feature-build.md` and `workflows/universal.md`.
 
 ---
 
-## D. Recommended new roles to add to `roles/`
+## D. Recommended new roles to add to `src/simpleharness/roles/`
 
-The skills below cover surfaces the current role set doesn't address (docs, deploy, strategy). They are proposals — *creating these role files is a separate task.* Each new role should mirror the structure of existing `roles/developer.md` etc.
+The skills below cover surfaces the current role set doesn't address (docs, deploy, strategy). They are proposals — *creating these role files is a separate task.* Each new role should mirror the structure of existing `src/simpleharness/roles/developer.md` etc.
 
 ### D.1 `documentation-writer.md` *(proposed)*
 
@@ -105,5 +105,5 @@ Owns direction, positioning, prioritization, and stakeholder framing. Invoked fo
 When a role, subagent, or workflow file changes:
 1. Update the mapping table in Section A, A2, or B above.
 2. If a new skill becomes relevant, add it to the table rather than creating a parallel list.
-3. If a proposed role in Section D gets created as a real file in `roles/`, move it up into Section A and delete the proposal entry.
-4. If a new subagent is added to `subagents/`, add it to Section A2.
+3. If a proposed role in Section D gets created as a real file in `src/simpleharness/roles/`, move it up into Section A and delete the proposal entry.
+4. If a new subagent is added to `src/simpleharness/subagents/`, add it to Section A2.

@@ -22,6 +22,15 @@ build-backend = "setuptools.build_meta"
 package-dir = {"" = "src"}
 packages = ["simpleharness"]
 
+[tool.setuptools.package-data]
+simpleharness = [
+    "config.yaml",
+    "simpleharness_approver_hook.sh",
+    "roles/*.md",
+    "subagents/*.md",
+    "workflows/*.md",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py313"

@@ -37,7 +37,7 @@ FC/IS split: pure core modules (frozen dataclasses, `@deal.pure` on every functi
 | `src/simpleharness/approver_core.py` | Pure approver decision logic — FP-enforced |
 | `src/simpleharness/shell.py` | CLI entry point, file I/O, subprocess, tick loop |
 | `src/simpleharness/approver_shell.py` | PreToolUse hook slow path (impure orchestration) |
-| `simpleharness_approver_hook.sh` | Bash fast path for the approver hook |
+| `src/simpleharness/simpleharness_approver_hook.sh` | Bash fast path for the approver hook |
 | `scripts/check_fp_purity.py` | AST gate: every function in core must be `@deal.pure` decorated |
 | `tests/test_core.py` + `tests/test_approver_core.py` | pytest suite (~125 tests, ~99% coverage on core modules) |
 
@@ -46,7 +46,7 @@ FC/IS split: pure core modules (frozen dataclasses, `@deal.pure` on every functi
 - `fp-purity-gate` — enforces that every function in `core.py` / `approver_core.py` is decorated
 
 **Other dirs:**
-- **`roles/`** — role-specific prompts and configuration.
+- **`src/simpleharness/roles/`** — role-specific prompts and configuration.
 - **`tests/`** — pytest suite.
 - **`claude-tools/`** — ad-hoc scripts (gitignored).
 
