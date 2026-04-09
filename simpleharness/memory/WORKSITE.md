@@ -29,5 +29,12 @@ Long-term notes that every session can read.
   - `core.py State`: add `retry_count: int = 0`, `retry_after: str | None = None`
   - `io.py`: extend `read_state`/`write_state` + `_STATE_FIELD_ORDER`
   - `shell.py tick_once`: extract error text post-session, call classifier, pass to compute function; add `retry_after` filter in `plan_tick`
-- Next: plan-writer creates implementation plan.
+- **Plan complete** (`02-plan.md`): 7-task TDD plan, Sonnet-reviewed. Key design choices:
+  - `now: datetime` added to `pick_next_task` and `plan_tick` signatures (pure backoff filtering)
+  - New `TickPlan` kind `"all_backoff"` for when all candidates are in backoff
+  - `classify_result` is keyword-only on `compute_post_session_state` (backward-compatible)
+  - Error text extracted from `.jsonl` log in shell, not from `SessionResult`
+- **Risk to watch:** `@deal.pure` may flag `datetime.fromisoformat` or module-level `re.compile` constants — see risk #1 in plan
+- **Existing test call-sites:** all `plan_tick()` and `pick_next_task()` calls in tests must gain a `now` arg (Task 5 Step 6)
+- Next: developer implements the plan.
 - Branch: `feature/dev-container` (same as tasks 001/002).
