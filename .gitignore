@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 build/
 dist/
+.coverage
 
 # uv cache (keep uv.lock checked in — it pins versions)
 .python-version
