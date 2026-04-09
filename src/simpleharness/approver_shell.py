@@ -410,7 +410,8 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
         except OSError as e:
             _stderr(f"failed to write fake approver log: {e}")
     else:
-        assert _plan.spawn is not None
+        if _plan.spawn is None:
+            return _deny_synthetic("internal error: review plan missing spawn request")
         # Shell builds the real role_path for spawn (plan only has a placeholder)
         try:
             task_log_dir = _approver_log_dir(env.worksite, env.task_slug)
@@ -489,9 +490,6 @@ def main() -> None:
 
         try:
             verdict = _review(env, tool_name, tool_input)
-        except ApproverTimeout as exc:
-            _emit("deny", f"approver timed out: {exc}")
-            return
         except Exception as exc:
             _stderr(f"hook internal error: {exc!r}")
             _emit("deny", f"approver hook internal error: {type(exc).__name__}: {exc}")

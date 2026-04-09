@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from simpleharness.approver_core import (
     ApproverEnv,
     ReviewOutcome,
+    ReviewPlan,
     SpawnRequest,
     Verdict,
     _deny_synthetic,
@@ -247,6 +250,7 @@ def test_plan_review_preemptive_deny_missing_role():
         stream_tail="",
         currently_approved=(),
     )
+    assert isinstance(plan, ReviewPlan)
     assert plan.preemptive_deny is not None
     assert "role file not found" in plan.preemptive_deny
     assert plan.fake_verdict is None
@@ -263,6 +267,7 @@ def test_plan_review_fake_mode():
         stream_tail="",
         currently_approved=(),
     )
+    assert isinstance(plan, ReviewPlan)
     assert plan.preemptive_deny is None
     assert plan.fake_verdict is not None
     assert plan.fake_verdict.decision == "allow"
@@ -280,6 +285,7 @@ def test_plan_review_normal_spawn():
         stream_tail="some context",
         currently_approved=("git status *",),
     )
+    assert isinstance(plan, ReviewPlan)
     assert plan.preemptive_deny is None
     assert plan.fake_verdict is None
     assert plan.spawn is not None
@@ -299,6 +305,7 @@ def test_plan_review_spawn_prompt_contains_approved():
         stream_tail="",
         currently_approved=("ls *", "git *"),
     )
+    assert isinstance(plan, ReviewPlan)
     assert plan.spawn is not None
     assert "ls *" in plan.spawn.prompt
     assert "git *" in plan.spawn.prompt
@@ -330,13 +337,15 @@ def test_finalize_deny_with_escalation():
 
 
 def test_finalize_outcome_is_frozen():
-    import dataclasses
+    """ReviewOutcome must be frozen and raise FrozenInstanceError on mutation."""
+    outcome = ReviewOutcome(
+        verdict=Verdict(decision="allow", pattern="ls *", reason="test"),
+        pattern_to_persist="ls *",
+        should_escalate=False,
+    )
 
-    v = Verdict(decision="allow", pattern="ls *", reason="ok")
-    outcome = finalize_review(v, _cfg())
-    assert isinstance(outcome, ReviewOutcome)
-    assert dataclasses.is_dataclass(outcome)
-    # frozen=True means the class has __setattr__ raising FrozenInstanceError
-    fields = {f.name for f in dataclasses.fields(outcome)}
-    assert "should_escalate" in fields
-    assert "pattern_to_persist" in fields
+    def attempt_mutation() -> None:
+        cast(Any, outcome).should_escalate = True
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        attempt_mutation()

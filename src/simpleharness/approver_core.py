@@ -255,7 +255,6 @@ class SpawnRequest:
 
     prompt: str
     approver_model: str
-    role_path: Path
     worksite: Path
     task_slug: str
     timeout_s: float
@@ -329,11 +328,9 @@ def plan_review(
         verdict = fake_verdict_from_input(tool_name, tool_input)
         return ReviewPlan(fake_verdict=verdict, prompt=prompt)
 
-    role_path = Path("roles") / "approver.md"  # placeholder; shell passes the real path
     spawn = SpawnRequest(
         prompt=prompt,
         approver_model=env.approver_model,
-        role_path=role_path,
         worksite=env.worksite,
         task_slug=env.task_slug,
         timeout_s=env.timeout_s,
