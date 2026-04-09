@@ -11,10 +11,8 @@
 If you discover a security vulnerability in SimpleHarness, please report it responsibly:
 
 1. **Do not** open a public GitHub issue.
-2. Email **security@simpleharness.dev** (or open a [private security advisory](https://github.com/OleJBondahl/SimpleHarness/security/advisories/new) on GitHub).
+2. Open a [private security advisory](https://github.com/OleJBondahl/SimpleHarness/security/advisories/new) on GitHub.
 3. Include a description of the vulnerability, steps to reproduce, and any relevant logs or screenshots.
-
-You should receive an acknowledgement within 48 hours. We aim to provide a fix or mitigation within 7 days of confirmation.
 
 ## Security Tools
 
