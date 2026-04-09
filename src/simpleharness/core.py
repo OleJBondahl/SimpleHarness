@@ -346,6 +346,18 @@ class SessionResult:
     duration_ms: int | None = None
 
 
+ErrorOutcome = Literal["usage_limit", "transient", "fatal"]
+
+
+@dataclass(frozen=True)
+class ClassifyResult:
+    """Result of classifying a CLI error."""
+
+    outcome: ErrorOutcome
+    reason: str
+    retry_after_iso: str | None = None  # ISO 8601 reset timestamp (usage_limit only)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Task specification (parsed from TASK.md frontmatter)
 # ────────────────────────────────────────────────────────────────────────────
@@ -1102,6 +1114,66 @@ def compute_post_session_state(
         )
 
     return new_state
+
+
+# ── CLI error classification ─────────────────────────────────────────────────
+
+_USAGE_LIMIT_RE = re.compile(
+    r"usage.limit.*reset.*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|\+\d{2}:\d{2})?)",
+    re.IGNORECASE,
+)
+
+_TRANSIENT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"overloaded",
+        r"\b529\b",
+        r"\b503\b",
+        r"rate.?limit",
+        r"ECONNRESET",
+        r"ETIMEDOUT",
+        r"\bDNS\b",
+        r"timeout",
+    )
+)
+
+_AUTH_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\b401\b",
+        r"invalid api key",
+        r"not authenticated",
+        r"token expired",
+    )
+)
+
+
+@deal.pure
+def classify_cli_error(exit_code: int | None, error_text: str) -> ClassifyResult:
+    """Classify a CLI error into usage_limit, transient, or fatal.
+
+    Checks usage-limit first (has reset time), then transient patterns,
+    then auth/fatal patterns. Unknown errors default to fatal.
+    """
+    # usage limit with reset timestamp (checked first — takes priority)
+    m = _USAGE_LIMIT_RE.search(error_text)
+    if m:
+        return ClassifyResult("usage_limit", "usage limit hit", retry_after_iso=m.group(1))
+
+    # transient patterns
+    for pat in _TRANSIENT_PATTERNS:
+        if pat.search(error_text):
+            return ClassifyResult("transient", f"matched transient pattern: {pat.pattern}")
+
+    # auth / fatal patterns
+    for pat in _AUTH_PATTERNS:
+        if pat.search(error_text):
+            return ClassifyResult("fatal", "auth_expired — run claude login in container")
+
+    # unknown → fatal (loud stop, not silent retry)
+    last_line = error_text.strip().splitlines()[-1] if error_text.strip() else ""
+    reason = last_line if last_line else f"exit code {exit_code}"
+    return ClassifyResult("fatal", reason)
 
 
 @deal.pure

@@ -27,6 +27,7 @@ from simpleharness.core import (
     build_refinement_text,
     build_session_prompt,
     check_deliverables,
+    classify_cli_error,
     compute_post_session_state,
     deps_satisfied,
     format_task_dashboard,
@@ -1264,3 +1265,94 @@ def test_state_retry_fields_roundtrip_defaults(tmp_path):
     restored = read_state(path)
     assert restored.retry_count == 0
     assert restored.retry_after is None
+
+
+# ── classify_cli_error ────────────────────────────────────────────────────────
+
+
+def test_classify_usage_limit_with_reset():
+    r = classify_cli_error(1, "Usage limit reached. Reset at 2026-04-09T17:00:00Z.")
+    assert r.outcome == "usage_limit"
+    assert r.retry_after_iso == "2026-04-09T17:00:00Z"
+
+
+def test_classify_transient_overloaded():
+    r = classify_cli_error(1, "API is overloaded, please retry later")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_529():
+    r = classify_cli_error(1, "HTTP 529 error from upstream")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_503():
+    r = classify_cli_error(1, "503 Service Unavailable")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_rate_limit():
+    r = classify_cli_error(1, "Rate limit exceeded")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_econnreset():
+    r = classify_cli_error(1, "ECONNRESET: connection reset by peer")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_etimedout():
+    r = classify_cli_error(1, "ETIMEDOUT: connection timed out")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_dns():
+    r = classify_cli_error(1, "DNS resolution failed for api.anthropic.com")
+    assert r.outcome == "transient"
+
+
+def test_classify_transient_timeout():
+    r = classify_cli_error(1, "Request timeout after 30s")
+    assert r.outcome == "transient"
+
+
+def test_classify_fatal_401():
+    r = classify_cli_error(1, "401 Unauthorized")
+    assert r.outcome == "fatal"
+    assert "auth_expired" in r.reason
+
+
+def test_classify_fatal_invalid_api_key():
+    r = classify_cli_error(1, "Invalid API key provided")
+    assert r.outcome == "fatal"
+    assert "auth_expired" in r.reason
+
+
+def test_classify_fatal_not_authenticated():
+    r = classify_cli_error(1, "Not authenticated — please run claude login")
+    assert r.outcome == "fatal"
+    assert "auth_expired" in r.reason
+
+
+def test_classify_fatal_token_expired():
+    r = classify_cli_error(1, "Token expired, re-authenticate")
+    assert r.outcome == "fatal"
+    assert "auth_expired" in r.reason
+
+
+def test_classify_fatal_unknown():
+    r = classify_cli_error(1, "Something completely unexpected happened")
+    assert r.outcome == "fatal"
+    assert "unexpected" in r.reason.lower()
+
+
+def test_classify_fatal_empty_error_text():
+    r = classify_cli_error(42, "")
+    assert r.outcome == "fatal"
+    assert "42" in r.reason
+
+
+def test_classify_usage_limit_priority_over_transient():
+    """Usage limit with reset time should match usage_limit, not transient."""
+    r = classify_cli_error(1, "Rate limit: usage limit reached. Reset at 2026-04-09T18:00:00Z")
+    assert r.outcome == "usage_limit"
