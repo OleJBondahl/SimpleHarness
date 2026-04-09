@@ -1085,3 +1085,13 @@ def test_build_rebrief_text_no_deliverables():
     text = build_rebrief_text("000-upstream", "002-downstream", ())
     assert "(none declared)" in text
     assert "simpleharness unblock 002-downstream" in text
+
+
+def test_state_cost_roundtrips_through_io(tmp_path):
+    from simpleharness.io import read_state, write_state
+
+    state = _state(total_cost_usd=2.75)
+    path = tmp_path / "STATE.md"
+    write_state(path, state)
+    loaded = read_state(path)
+    assert loaded.total_cost_usd == 2.75
