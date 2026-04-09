@@ -68,3 +68,15 @@ Task 004 (documentation) consumes these artifacts as the basis for user-facing s
 ## Notes
 
 The spec in `docs/dev-container.md` (refined by task 001) is the primary guide. Follow it closely but adapt where needed based on the actual codebase.
+
+## Refinement from 001-design-dev-container-for-safe-bypass-permissions-execution
+
+Task 001 completed successfully (commit `c71324d`). The spec at `docs/dev-container.md` was refined against the current codebase and is implementation-ready. Key concrete details for this task:
+
+- **All 5 deliverable file contents are specified in §4.1–4.5** of the spec, with inline comments explaining non-obvious choices. Use these as the starting implementation, adapting only where the current codebase requires it.
+- **Sandbox check location confirmed**: `shell.py:699-709` checks for `/.dockerenv` or `SIMPLEHARNESS_SANDBOX=1`. The compose.yml sets the env var; Docker provides the file. No source changes needed.
+- **Toolbox root resolution confirmed**: `core.py:177` uses `Path(__file__).resolve().parent`, so editable install from the bind mount at `/opt/simpleharness` works without extra env vars.
+- **Config structure confirmed**: `config.yaml:35-48` has `permissions.mode: safe` as default. The entrypoint writes per-worksite `permissions.mode: dangerous` only into `<worksite>/simpleharness/config.yaml`.
+- **Stale references fixed**: all `harness.py` refs updated to correct modules (`core.py`, `shell.py`, `session.py`); `dangerous_auto_approve` → `permissions.mode: dangerous`.
+- **§12 (CLI error handling) is marked "proposed design"** — do NOT implement retry logic; that belongs to task 003.
+- **`.gitattributes` already exists** in the repo with `* text=auto eol=lf`. Verify it covers `*.sh`, `Dockerfile`, `compose.yml` — if it already uses the wildcard `*` pattern, no additions needed.
