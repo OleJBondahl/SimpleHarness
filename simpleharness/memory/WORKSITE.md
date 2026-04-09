@@ -18,7 +18,16 @@ Long-term notes that every session can read.
 
 ## Task 003 — CLI error classifier and retry backoff (in progress)
 
-- **Kickoff complete.** Design spec is `docs/dev-container.md` §12 — very detailed, covers classifier function, STATE.md fields, backoff schedule, and watch-loop changes.
-- Next: brainstormer validates the spec's assumptions against current codebase (core.py, shell.py, session.py) and flags any gaps or blockers.
-- Key "must block" conditions: if watch loop can't support per-task skip without major refactor, if STATE.md parser needs breaking changes, if classifier needs data not currently captured, or if changes would break the approver hook.
+- **Brainstorm complete.** All four "must block" conditions verified clear:
+  - Watch loop supports per-task skip via `plan_tick` filter (~5 lines, not a refactor)
+  - STATE.md parser is additive — new optional fields `retry_count`/`retry_after` with defaults
+  - Classifier data already captured — `exit_code` from `proc.returncode`, error text from `.jsonl` stream log
+  - Approver hook unaffected — retry logic is post-session path
+- **Recommended approach:** maximal purity (Approach A). Classifier, backoff computation, and state transitions all go in `core.py` with `@deal.pure`. Shell layer only extracts error text from `.jsonl` log.
+- **Key integration points:**
+  - `core.py`: new `ClassifyResult` type, `classify_cli_error()`, backoff schedule, extend `compute_post_session_state`
+  - `core.py State`: add `retry_count: int = 0`, `retry_after: str | None = None`
+  - `io.py`: extend `read_state`/`write_state` + `_STATE_FIELD_ORDER`
+  - `shell.py tick_once`: extract error text post-session, call classifier, pass to compute function; add `retry_after` filter in `plan_tick`
+- Next: plan-writer creates implementation plan.
 - Branch: `feature/dev-container` (same as tasks 001/002).
