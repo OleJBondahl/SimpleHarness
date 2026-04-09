@@ -357,8 +357,8 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     approver_base: dict[str, str] = {}
     if config.permissions.mode == "approver":
         approver_base = {
-            "SIMPLEHARNESS_STREAM_LOG": str(jsonl_log),
-            "SIMPLEHARNESS_WORKSITE": str(Path(task.state.worksite)),
+            "SIMPLEHARNESS_STREAM_LOG": jsonl_log.as_posix(),
+            "SIMPLEHARNESS_WORKSITE": Path(task.state.worksite).as_posix(),
             "SIMPLEHARNESS_APPROVER_MODEL": config.permissions.approver_model,
             "SIMPLEHARNESS_TASK_SLUG": task.slug,
         }
