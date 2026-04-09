@@ -352,6 +352,7 @@ class SessionResult:
 class Deliverable:
     path: str
     description: str = ""
+    min_lines: int | None = None
 
 
 @dataclass(frozen=True)
@@ -413,6 +414,7 @@ def parse_task_spec(frontmatter: dict[str, Any]) -> TaskSpec:
         Deliverable(
             path=str(d["path"]),
             description=str(d.get("description", "")),
+            min_lines=int(d["min_lines"]) if d.get("min_lines") is not None else None,
         )
         if isinstance(d, dict)
         else Deliverable(path=str(d))
@@ -505,9 +507,24 @@ def build_rebrief_text(
 
 
 @deal.pure
-def check_deliverables(spec: TaskSpec, existing_paths: frozenset[str]) -> tuple[str, ...]:
-    """Return paths of deliverables that are missing from *existing_paths*."""
-    return tuple(d.path for d in spec.deliverables if d.path not in existing_paths)
+def check_deliverables(
+    spec: TaskSpec,
+    existing_paths: frozenset[str],
+    line_counts: Mapping[str, int] | None = None,
+) -> tuple[str, ...]:
+    """Return paths of deliverables that are missing or fail content checks.
+
+    *existing_paths* — set of deliverable paths that exist on disk.
+    *line_counts* — optional mapping of path → line count for min_lines checks.
+    """
+    counts = line_counts or {}
+    missing: list[str] = []
+    for d in spec.deliverables:
+        if d.path not in existing_paths or (
+            d.min_lines is not None and counts.get(d.path, 0) < d.min_lines
+        ):
+            missing.append(d.path)
+    return tuple(missing)
 
 
 @deal.pure

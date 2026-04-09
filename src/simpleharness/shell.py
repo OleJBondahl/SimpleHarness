@@ -317,7 +317,12 @@ def tick_once(worksite: Path, config: Config) -> bool:
                 existing = frozenset(
                     d.path for d in task.spec.deliverables if (worksite / d.path).exists()
                 )
-                missing = check_deliverables(task.spec, existing)
+                line_counts = {
+                    d.path: len((worksite / d.path).read_text(encoding="utf-8").splitlines())
+                    for d in task.spec.deliverables
+                    if (worksite / d.path).exists()
+                }
+                missing = check_deliverables(task.spec, existing, line_counts)
                 if missing:
                     missing_list = ", ".join(missing)
                     warn(f"task {task.slug}: missing deliverables: {missing_list}")

@@ -990,6 +990,62 @@ def test_check_deliverables_no_deliverables():
     assert missing == ()
 
 
+def test_check_deliverables_min_lines_satisfied():
+    spec = TaskSpec(
+        title="t",
+        workflow="w",
+        deliverables=(Deliverable("a.md", "", min_lines=5),),
+    )
+    missing = check_deliverables(spec, frozenset({"a.md"}), {"a.md": 10})
+    assert missing == ()
+
+
+def test_check_deliverables_min_lines_not_met():
+    spec = TaskSpec(
+        title="t",
+        workflow="w",
+        deliverables=(Deliverable("a.md", "", min_lines=50),),
+    )
+    missing = check_deliverables(spec, frozenset({"a.md"}), {"a.md": 10})
+    assert missing == ("a.md",)
+
+
+def test_check_deliverables_min_lines_no_count_provided():
+    spec = TaskSpec(
+        title="t",
+        workflow="w",
+        deliverables=(Deliverable("a.md", "", min_lines=5),),
+    )
+    # File exists but no line count provided — treated as 0 lines, fails check
+    missing = check_deliverables(spec, frozenset({"a.md"}))
+    assert missing == ("a.md",)
+
+
+def test_deliverable_min_lines_default_none():
+    d = Deliverable("x.md", "doc")
+    assert d.min_lines is None
+
+
+def test_parse_task_spec_deliverable_min_lines():
+    fm = {
+        "title": "t",
+        "workflow": "w",
+        "deliverables": [{"path": "out.md", "description": "report", "min_lines": 100}],
+    }
+    spec = parse_task_spec(fm)
+    assert spec.deliverables[0].min_lines == 100
+
+
+def test_parse_task_spec_deliverable_no_min_lines():
+    fm = {
+        "title": "t",
+        "workflow": "w",
+        "deliverables": [{"path": "out.md", "description": "report"}],
+    }
+    spec = parse_task_spec(fm)
+    assert spec.deliverables[0].min_lines is None
+
+
 # ── pick_next_task with deps ─────────────────────────────────────────────────
 
 
