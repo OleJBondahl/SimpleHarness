@@ -1,0 +1,20 @@
+# Build context trimming. The Dockerfile does not COPY the toolbox in, so
+# this only affects `docker compose build` context tar size.
+.git/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
