@@ -8,7 +8,7 @@ This is a design / spec document. It describes the workflow and names every file
 
 ## 1. What this is
 
-SimpleHarness runs `claude -p` in headless mode. Its "dangerous mode" (`config.permissions.dangerous_auto_approve: true` → `--permission-mode bypassPermissions`) approves arbitrary shell, which is unsafe on a dev host. `harness.py:1248-1264` already gates dangerous mode behind a sandbox marker (`/.dockerenv` or `SIMPLEHARNESS_SANDBOX=1`), but the repo has no container artifacts to satisfy it.
+SimpleHarness runs `claude -p` in headless mode. Its "dangerous mode" (`config.permissions.mode: dangerous` → `--permission-mode bypassPermissions`) approves arbitrary shell, which is unsafe on a dev host. `shell.py:699-709` already gates dangerous mode behind a sandbox marker (`/.dockerenv` or `SIMPLEHARNESS_SANDBOX=1`), but the repo has no container artifacts to satisfy it.
 
 This doc specifies the minimum set of files — one `Dockerfile`, one `compose.yml`, two small shell scripts — that turn any Python or TypeScript git repo into a safe worksite for SimpleHarness running autonomously with full bypass permissions.
 
@@ -160,7 +160,7 @@ CMD ["simpleharness", "watch"]
 
 **Why Python base, not Node:** the harness is Python. Node is needed only so the agent can run `npm` / `node` against TypeScript worksites — adding it costs two RUN layers. Starting from `node:lts` and bolting on uv + Python 3.13 is more lines and ships a full Node server runtime we don't use.
 
-**Why install SimpleHarness at run-time, not build-time:** editable install against the bind-mounted toolbox means edits to `harness.py`, `roles/*.md`, and `workflows/*.md` apply without rebuilding the image. `harness.py:215` resolves `toolbox_root()` from `Path(__file__).resolve().parent`, so the editable shim points at `/opt/simpleharness` with no extra env var.
+**Why install SimpleHarness at run-time, not build-time:** editable install against the bind-mounted toolbox means edits to `core.py`, `shell.py`, `roles/*.md`, and `workflows/*.md` apply without rebuilding the image. `core.py:177` resolves `toolbox_root()` from `Path(__file__).resolve().parent`, so the editable shim points at `/opt/simpleharness` with no extra env var.
 
 ### 4.2 `compose.yml`
 
@@ -359,9 +359,9 @@ if [[ ! -f "${WORKSITE_CFG}" ]]; then
   echo "[entrypoint] writing dangerous-mode opt-in to ${WORKSITE_CFG}"
   cat > "${WORKSITE_CFG}" <<'EOF'
 # Container opt-in to dangerous mode. /.dockerenv satisfies the sandbox
-# check at harness.py:1248-1264 and this override flips the flag.
+# check at shell.py:699-709 and this override flips the flag.
 permissions:
-  dangerous_auto_approve: true
+  mode: dangerous
 EOF
 fi
 
@@ -454,11 +454,11 @@ The container makes dangerous mode safe by shrinking the blast radius to exactly
 
 ### Dangerous mode activation is per-worksite
 
-The toolbox `config.yaml:41` stays `dangerous_auto_approve: false`. The entrypoint writes `permissions.dangerous_auto_approve: true` only into `<worksite>/simpleharness/config.yaml`, and only if the user has not provided one themselves. Host-side `simpleharness watch` still refuses dangerous mode because (a) the toolbox default is unchanged, and (b) `harness.py:1248-1264` requires a sandbox marker the host doesn't have.
+The toolbox `config.yaml` ships with `permissions.mode: safe`. The entrypoint writes `permissions.mode: dangerous` only into `<worksite>/simpleharness/config.yaml`, and only if the user has not provided one themselves. Host-side `simpleharness watch` still refuses dangerous mode because (a) the toolbox default is `safe`, and (b) `shell.py:699-709` requires a sandbox marker the host doesn't have.
 
 ### How the harness knows it's sandboxed
 
-`harness.py:1248-1264`:
+`shell.py:699-709`:
 ```python
 in_sandbox = (
     Path("/.dockerenv").exists()
@@ -467,6 +467,8 @@ in_sandbox = (
 ```
 
 Belt and braces: `/.dockerenv` is created by Docker on every container start, and compose sets `SIMPLEHARNESS_SANDBOX=1` as an env var. Either alone would suffice.
+
+The harness also accepts a `--i-know-its-dangerous` CLI flag that overrides the sandbox check, for cases where the user deliberately wants dangerous mode on an unsandboxed host.
 
 ---
 
@@ -616,6 +618,8 @@ docker volume ls | awk '/sh-[0-9a-f]+_simpleharness-home/ {print $2}' | xargs -r
 
 ## 12. Handling Claude Code CLI errors
 
+> **Status: proposed design.** The retry fields (`retry_count`, `retry_after`) and the classifier function described below are not yet implemented in the harness. This section specifies the intended behavior for implementation in a future task.
+
 The harness runs unattended in the container. Transient CLI failures — usage limits, server overload, network blips — must not tear down the flow. Permanent failures must stop the task cleanly without burning retries. The proposed policy is **two new optional fields on `STATE.md`** plus **one classifier function** that inspects every failed `claude -p` session.
 
 ### Two new STATE.md fields
@@ -647,7 +651,7 @@ Both are optional. Present only while a task is in backoff or parked.
 
 Two inputs, both already available to the harness:
 
-1. **Exit code** from `spawn_claude()` at `harness.py:652-663`.
+1. **Exit code** from `spawn_claude()` at `session.py:54-73`.
 2. **Stream-json error events** in the per-session `.jsonl` log the harness already writes (`{"type":"error", ...}`).
 
 A tiny pattern table maps recognized signals to an outcome. Rough shape:
@@ -724,7 +728,7 @@ Log messages name the task slug so parallel instances tailing logs stay readable
 | 1 | **No network egress filtering.** The container can reach anywhere the host can. | Agents need the Claude API, apt, pip, npm, and likely your target repo's test fixtures. A proper egress allowlist is a separate design exercise. | Review agent behavior; don't run against repos with secrets in the working tree. |
 | 2 | **Windows host only.** Linux host support needs UID/GID remap via gosu (Paperclip pattern). | Out of scope for v0.1; adds ~30 lines of entrypoint complexity. | Linux users: add gosu + UID remap per Paperclip's `docker-entrypoint.sh`. |
 | 3 | **Stale `claude` binary after image rebuild.** Named-volume shadowing trap. | True docker limitation, not fixable without a different persistence strategy. | Document is explicit: `docker compose down -v` before rebuilding. |
-| 4 | **Manual token expiry recovery.** Harness doesn't detect 401 from `claude -p`. | Requires a `harness.py` change to parse exit codes or stream-json error events. | User reruns the login one-liner when they notice agent failures. |
+| 4 | **Manual token expiry recovery.** Harness doesn't detect 401 from `claude -p`. | Requires a `shell.py` / `session.py` change to parse exit codes or stream-json error events. | User reruns the login one-liner when they notice agent failures. |
 | 5 | **Package lockfile drift between host and container.** `npm install` inside the container may write a different lockfile than the host's Windows `npm install`. | Known cross-platform issue unrelated to SimpleHarness. | Commit only from inside the container, or add `npm ci --ignore-scripts` guidance to role files. |
 | 6 | **Self-deletion risk if worksite is bind-mounted `:rw` to a volatile path.** Launcher protects against `WORKSITE == TOOLBOX`, but not against `WORKSITE = /c/Users/.../Documents`. | By design — user knows their repos. | Point launcher at a specific repo directory, not your home folder. Consider using `git worktree` for high-stakes tasks. |
 | 7 | **Whole-home named volume conflates user state and tool binaries.** One wipe nukes everything. | Simpler than multiple narrowly-scoped volumes, and matches Paperclip's working pattern. | Documented — user accepts the trade-off. |
@@ -745,12 +749,13 @@ Log messages name the task slug so parallel instances tailing logs stay readable
 
 ## Reference map
 
-- `harness.py:215` — `toolbox_root()` resolution via `Path(__file__).resolve().parent`.
-- `harness.py:395-406` — `worksite_root()` precedence: `--worksite` > `SIMPLEHARNESS_WORKSITE` > cwd.
-- `harness.py:599-642` — `build_claude_cmd()` — where the permission flags are chosen.
-- `harness.py:652-663` — `spawn_claude()` — subprocess setup (no PTY; only parent needs TTY).
-- `harness.py:1248-1264` — sandbox check driving dangerous-mode gating.
-- `config.yaml:41` — shipped default `dangerous_auto_approve: false`.
+- `core.py:177` — `toolbox_root()` resolution via `Path(__file__).resolve().parent`.
+- `shell.py:88-93` — `worksite_root()` precedence: `--worksite` > `SIMPLEHARNESS_WORKSITE` > cwd.
+- `core.py:714-761` — `build_claude_cmd()` — where the permission flags are chosen.
+- `session.py:54-73` — `spawn_claude()` — subprocess setup (no PTY; only parent needs TTY).
+- `shell.py:699-709` — sandbox check driving dangerous-mode gating.
+- `config.yaml:35-48` — permissions block, shipped default `mode: safe`.
 - `intent.md:26-31` — two-repo split and multi-worksite parallelism.
 - `intent.md:73-86` — intervention model (Ctrl+C → correction prompt).
-- `intent.md:108-109` — project-leader toolbox-edit privilege (the reason `--allow-toolbox-edits` exists).
+- `intent.md:108-112` — dangerous mode and sandbox gating requirement.
+- `intent.md:115-119` — project-leader toolbox-edit privilege (the reason `--allow-toolbox-edits` exists).
