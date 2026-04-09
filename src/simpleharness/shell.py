@@ -33,6 +33,7 @@ from simpleharness.core import (
     build_refinement_text,
     check_deliverables,
     compute_post_session_state,
+    format_task_dashboard,
     parse_task_spec,
     pause_file_path,
     plan_downstream_transitions,
@@ -477,28 +478,56 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    from rich.table import Table
+
     worksite = worksite_root(args)
     tasks = discover_tasks(worksite)
     if not tasks:
-        say("no tasks")
+        say("no tasks found")
         return 0
+
+    table = Table(title="SimpleHarness Tasks", show_lines=True)
+    table.add_column("Task", style="cyan", no_wrap=True)
+    table.add_column("Status", style="bold")
+    table.add_column("Phase Progress")
+    table.add_column("Sessions", justify="right")
+    table.add_column("Cost", justify="right")
+    table.add_column("Info")
+
     for t in tasks:
-        line = (
-            f"{t.slug}  status={t.state.status}  phase={t.state.phase}  "
-            f"last={t.state.last_role or '-'}  next={t.state.next_role or '-'}  "
-            f"sessions={t.state.total_sessions}/{t.state.session_cap}"
+        workflow_phases: tuple[str, ...] = ()
+        try:
+            wf = load_workflow(t.state.workflow)
+            workflow_phases = wf.phases
+        except Exception:
+            pass
+
+        dash = format_task_dashboard(t.state, workflow_phases)
+
+        status_style = {
+            "active": "green",
+            "done": "dim",
+            "blocked": "yellow",
+            "paused": "blue",
+        }.get(dash["status"], "")
+        status_text = f"[{status_style}]{dash['status']}[/]" if status_style else dash["status"]
+
+        info = ""
+        if t.state.blocked_reason:
+            info = f"[yellow]{t.state.blocked_reason}[/]"
+        elif t.state.next_role:
+            info = f"next: {t.state.next_role}"
+
+        table.add_row(
+            t.slug,
+            status_text,
+            dash["phase_progress"],
+            dash["sessions"],
+            dash["cost"],
+            info,
         )
-        if t.state.status == "blocked":
-            line += f"  reason={t.state.blocked_reason}"
-        console.print(line)
-    blocked = [t for t in tasks if t.state.status == "blocked"]
-    if blocked:
-        reasons: dict[str, int] = {}
-        for t in blocked:
-            r = t.state.blocked_reason or "unknown"
-            reasons[r] = reasons.get(r, 0) + 1
-        parts = [f"{v} {k}" for k, v in reasons.items()]
-        say(f"\n{len(blocked)} blocked: {', '.join(parts)}")
+
+    console.print(table)
     return 0
 
 

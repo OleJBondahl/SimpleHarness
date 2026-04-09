@@ -29,6 +29,7 @@ from simpleharness.core import (
     check_deliverables,
     compute_post_session_state,
     deps_satisfied,
+    format_task_dashboard,
     parse_frontmatter,
     parse_task_spec,
     pause_file_path,
@@ -1160,3 +1161,24 @@ def test_state_cost_roundtrips_through_io(tmp_path):
 def test_pause_file_path():
     p = pause_file_path(Path("/worksite"))
     assert p == Path("/worksite/simpleharness/.PAUSE")
+
+
+def test_format_task_dashboard_active():
+    state = _state(phase="plan", total_sessions=3, session_cap=20, total_cost_usd=1.50)
+    result = format_task_dashboard(state, ("kickoff", "brainstorm", "plan", "develop", "review"))
+    assert "[PLAN]" in result["phase_progress"]
+    assert "kickoff" in result["phase_progress"]
+    assert result["sessions"] == "3/20"
+    assert result["cost"] == "$1.50"
+
+
+def test_format_task_dashboard_no_cost():
+    state = _state(total_cost_usd=0.0)
+    result = format_task_dashboard(state, ("kickoff",))
+    assert result["cost"] == "\u2014"
+
+
+def test_format_task_dashboard_empty_phases():
+    state = _state(phase="custom")
+    result = format_task_dashboard(state, ())
+    assert result["phase_progress"] == "custom"

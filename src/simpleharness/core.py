@@ -1090,3 +1090,31 @@ def compute_post_session_state(
         )
 
     return new_state
+
+
+@deal.pure
+def format_task_dashboard(
+    state: State,
+    workflow_phases: tuple[str, ...],
+) -> dict[str, str]:
+    """Build display fields for a task dashboard row.
+
+    Returns a dict with keys: status, phase_progress, sessions, cost.
+    """
+    phase_parts = []
+    for p in workflow_phases:
+        if p == state.phase:
+            phase_parts.append(f"[{p.upper()}]")
+        else:
+            phase_parts.append(p)
+    phase_progress = " > ".join(phase_parts) if phase_parts else state.phase
+
+    sessions = f"{state.total_sessions}/{state.session_cap}"
+    cost = f"${state.total_cost_usd:.2f}" if state.total_cost_usd > 0 else "\u2014"
+
+    return {
+        "status": state.status,
+        "phase_progress": phase_progress,
+        "sessions": sessions,
+        "cost": cost,
+    }
