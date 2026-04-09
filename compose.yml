@@ -1,0 +1,46 @@
+# SimpleHarness sandbox. Launch via scripts/launch.sh, which exports
+# WORKSITE_PATH, COMPOSE_PROJECT_NAME, and TOOLBOX_MOUNT_RO before calling
+# `docker compose run`.
+#
+# Upgrading the claude CLI baked into the image (after editing the Dockerfile):
+#   cd ~/SimpleHarness
+#   docker compose down -v    # MUST wipe the named volume — the RUN-layer
+#                             # binary at ~/.local/bin/claude is shadowed
+#                             # by the volume once it exists.
+#   scripts/launch.sh
+
+services:
+  simpleharness:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: simpleharness:latest
+    # NO container_name: — launch.sh sets COMPOSE_PROJECT_NAME per worksite so
+    # parallel instances against different repos do not collide on name.
+    tty: true
+    stdin_open: true
+    working_dir: /worksite
+    environment:
+      SIMPLEHARNESS_SANDBOX: "1"
+      SIMPLEHARNESS_WORKSITE: "/worksite"
+      PYTHONDONTWRITEBYTECODE: "1"
+      TERM: "xterm-256color"
+      FORCE_COLOR: "1"
+    volumes:
+      # Toolbox: read-only by default. launch.sh --allow-toolbox-edits flips
+      # TOOLBOX_MOUNT_RO=false for project-leader self-improvement sessions.
+      - type: bind
+        source: .
+        target: /opt/simpleharness
+        read_only: ${TOOLBOX_MOUNT_RO:-true}
+      # Worksite: the user's target repo.
+      - ${WORKSITE_PATH:?Run scripts/launch.sh — it exports WORKSITE_PATH}:/worksite
+      # Anonymous volume masks: Linux can't use a Windows .venv or node_modules.
+      - /worksite/.venv
+      - /worksite/node_modules
+      # Persistent harness home — holds claude credentials, the uv tool venv,
+      # the uv cache, and the baked-in claude binary at ~/.local/bin/claude.
+      - simpleharness-home:/home/harness
+
+volumes:
+  simpleharness-home:
