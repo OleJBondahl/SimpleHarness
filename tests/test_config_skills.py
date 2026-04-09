@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from simpleharness.core import Skill, SkillsConfig
-from simpleharness.shell import load_config
+from simpleharness.io import load_config
 
 
 def _write_config(path: Path, content: str) -> None:

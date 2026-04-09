@@ -44,7 +44,7 @@ from simpleharness.approver_core import (
     plan_review,
 )
 from simpleharness.core import toolbox_root
-from simpleharness.shell import (
+from simpleharness.io import (
     load_config,
     load_role,
     persist_approver_allow,

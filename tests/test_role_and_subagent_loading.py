@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from simpleharness.core import Skill, SkillList
-from simpleharness.shell import load_all_subagents, load_role, load_subagent
+from simpleharness.io import load_all_subagents, load_role, load_subagent
 
 
 def _write_md(path: Path, frontmatter: str, body: str = "Role body.") -> None:

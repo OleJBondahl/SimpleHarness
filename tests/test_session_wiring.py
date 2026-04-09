@@ -308,14 +308,14 @@ def test_session_env_available_skills_json_format() -> None:
 
 
 def test_write_session_settings_enforcement_off_returns_none(tmp_path: Path) -> None:
-    from simpleharness.shell import _write_session_settings
+    from simpleharness.io import _write_session_settings
 
     result = _write_session_settings(tmp_path, "off")
     assert result is None
 
 
 def test_write_session_settings_strict_writes_file(tmp_path: Path) -> None:
-    from simpleharness.shell import _write_session_settings
+    from simpleharness.io import _write_session_settings
 
     result = _write_session_settings(tmp_path, "strict")
     assert result is not None
@@ -329,7 +329,7 @@ def test_write_session_settings_strict_writes_file(tmp_path: Path) -> None:
 
 
 def test_write_approver_settings_includes_pretooluse(tmp_path: Path) -> None:
-    from simpleharness.shell import _write_approver_settings
+    from simpleharness.io import _write_approver_settings
 
     result = _write_approver_settings(tmp_path, "off")
     data = json.loads(result.read_text())
@@ -337,7 +337,7 @@ def test_write_approver_settings_includes_pretooluse(tmp_path: Path) -> None:
 
 
 def test_write_approver_settings_strict_includes_skill_hooks(tmp_path: Path) -> None:
-    from simpleharness.shell import _write_approver_settings
+    from simpleharness.io import _write_approver_settings
 
     result = _write_approver_settings(tmp_path, "strict")
     data = json.loads(result.read_text())
