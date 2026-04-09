@@ -23,3 +23,10 @@ Long-term notes that every session can read.
 - **Security fixes applied:** timezone-naive comparison, malformed retry_after handling, over-broad timeout pattern.
 - **Known low-priority items:** ReDoS in usage-limit regex, unbounded `.jsonl` read, no `blocked_reason` length cap.
 - Task 004 (documentation) can reference the three error outcomes and backoff behavior.
+
+## Task 004 — document dev container setup and usage (done)
+
+- Created `docs/dev-container-usage.md` — user-facing guide covering prerequisites, first-run setup, steady-state usage, Python/JS/TS support, `--allow-toolbox-edits`, error handling (3 categories from task 003), troubleshooting, and cleanup.
+- Documentation only — no source code or artifact changes.
+- Links to `docs/dev-container.md` (design spec) and `docs/usage.md` (CLI reference).
+- Note: `docs/usage.md` still has stale `dangerous_auto_approve` references (flagged in task 001, still not fixed).

@@ -3,8 +3,8 @@ task_slug: 004-document-dev-container-setup-and-usage
 workflow: universal
 worksite: C:\Users\OleJohanBondahl\Documents\Github_OJ\SimpleHarness
 toolbox: C:\Users\OleJohanBondahl\Documents\Github_OJ\SimpleHarness\src\simpleharness
-status: active
-phase: kickoff
+status: done
+phase: final
 next_role: null
 last_role: null
 total_sessions: 0
