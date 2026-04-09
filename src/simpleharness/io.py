@@ -474,6 +474,8 @@ _STATE_FIELD_ORDER = [
     "no_progress_ticks",
     "blocked_reason",
     "consecutive_same_role",
+    "retry_count",
+    "retry_after",
 ]
 
 
@@ -497,6 +499,8 @@ def read_state(path: Path) -> State:
         no_progress_ticks=int(meta.get("no_progress_ticks", 0) or 0),
         blocked_reason=meta.get("blocked_reason") or None,
         consecutive_same_role=int(meta.get("consecutive_same_role", 0) or 0),
+        retry_count=int(meta.get("retry_count", 0) or 0),
+        retry_after=meta.get("retry_after") or None,
     )
 
 
@@ -519,6 +523,8 @@ def write_state(path: Path, state: State) -> None:
         "no_progress_ticks": state.no_progress_ticks,
         "blocked_reason": state.blocked_reason,
         "consecutive_same_role": state.consecutive_same_role,
+        "retry_count": state.retry_count,
+        "retry_after": state.retry_after,
     }
     ordered = {k: data[k] for k in _STATE_FIELD_ORDER if k in data}
     yaml_body = yaml.safe_dump(

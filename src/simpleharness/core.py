@@ -320,6 +320,9 @@ class State:
     blocked_reason: str | None = None
     # consecutive same-role counter (harness-managed, not spec'd in plan but needed)
     consecutive_same_role: int = 0
+    # retry / backoff (harness-managed)
+    retry_count: int = 0
+    retry_after: str | None = None  # ISO 8601 timestamp
 
 
 @dataclass(frozen=True)

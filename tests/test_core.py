@@ -57,6 +57,8 @@ def _state(
     no_progress_ticks: int = 0,
     blocked_reason: str | None = None,
     total_cost_usd: float = 0.0,
+    retry_count: int = 0,
+    retry_after: str | None = None,
 ) -> State:
     return State(
         task_slug=slug,
@@ -76,6 +78,8 @@ def _state(
         updated="2024-01-01T00:00:00Z",
         last_session_id=None,
         total_cost_usd=total_cost_usd,
+        retry_count=retry_count,
+        retry_after=retry_after,
     )
 
 
@@ -1221,3 +1225,42 @@ def test_format_task_dashboard_empty_phases():
     state = _state(phase="custom")
     result = format_task_dashboard(state, ())
     assert result["phase_progress"] == "custom"
+
+
+# ── State retry fields ────────────────────────────────────────────────────────
+
+
+def test_state_retry_fields_default():
+    s = _state()
+    assert s.retry_count == 0
+    assert s.retry_after is None
+
+
+def test_state_retry_fields_set():
+    s = _state(retry_count=3, retry_after="2026-04-09T16:00:00Z")
+    assert s.retry_count == 3
+    assert s.retry_after == "2026-04-09T16:00:00Z"
+
+
+def test_state_retry_fields_roundtrip(tmp_path):
+    """read_state and write_state preserve retry fields."""
+    from simpleharness.io import read_state, write_state
+
+    path = tmp_path / "STATE.md"
+    original = _state(retry_count=2, retry_after="2026-04-09T16:00:00Z")
+    write_state(path, original)
+    restored = read_state(path)
+    assert restored.retry_count == 2
+    assert restored.retry_after == "2026-04-09T16:00:00Z"
+
+
+def test_state_retry_fields_roundtrip_defaults(tmp_path):
+    """Old STATE.md files without retry fields parse with defaults."""
+    from simpleharness.io import read_state, write_state
+
+    path = tmp_path / "STATE.md"
+    original = _state()  # retry_count=0, retry_after=None
+    write_state(path, original)
+    restored = read_state(path)
+    assert restored.retry_count == 0
+    assert restored.retry_after is None
