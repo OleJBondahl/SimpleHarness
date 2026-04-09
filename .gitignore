@@ -22,3 +22,6 @@ Thumbs.db
 
 # Per-repo scratch scripts that agents use for ad-hoc verification
 claude-tools/
+
+# Git worktrees for isolated development
+.worktrees/
