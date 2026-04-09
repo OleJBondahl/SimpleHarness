@@ -36,3 +36,9 @@ repos:
         language: system
         pass_filenames: false
         files: ^(src/simpleharness/(core|approver_core)\.py|scripts/check_fp_purity\.py)$
+
+      - id: detect-secrets
+        name: detect secrets
+        entry: uv run --group security detect-secrets-hook --baseline .secrets.baseline
+        language: system
+        types: [text]
