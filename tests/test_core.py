@@ -1316,7 +1316,7 @@ def test_classify_transient_dns():
 
 
 def test_classify_transient_timeout():
-    r = classify_cli_error(1, "Request timeout after 30s")
+    r = classify_cli_error(1, "Request timed out after 30s")
     assert r.outcome == "transient"
 
 
@@ -1603,3 +1603,23 @@ def test_plan_tick_run_with_now():
     t = _task(state=_state(retry_after=None))
     plan = plan_tick((t,), {"default": _workflow()}, frozenset(), _config(), _BACKOFF_NOW)
     assert plan.kind == "run"
+
+
+def test_classify_usage_limit_bare_timestamp_gets_z():
+    """Timestamp without timezone suffix gets Z appended."""
+    r = classify_cli_error(1, "Usage limit reached. Reset at 2026-04-09T17:00:00.")
+    assert r.outcome == "usage_limit"
+    assert r.retry_after_iso == "2026-04-09T17:00:00Z"
+
+
+def test_pick_next_task_invalid_retry_after_not_skipped():
+    """Task with malformed retry_after is not skipped (safe default)."""
+    t = _task(state=_state(retry_after="not-a-date"))
+    result = pick_next_task((t,), frozenset(), _BACKOFF_NOW)
+    assert result is not None
+
+
+def test_classify_fatal_generic_timeout():
+    """Generic 'timeout' in non-network context should be fatal, not transient."""
+    r = classify_cli_error(1, "Function execution timeout exceeded")
+    assert r.outcome == "fatal"

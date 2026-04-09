@@ -543,6 +543,15 @@ def check_deliverables(
 
 
 @deal.pure
+def _parse_retry_after(retry_after: str) -> datetime | None:
+    """Parse a retry_after ISO string, returning None on invalid input."""
+    try:
+        return datetime.fromisoformat(retry_after)
+    except (ValueError, TypeError):
+        return None
+
+
+@deal.pure
 def pick_next_task(
     tasks: Sequence[Task], corrections: frozenset[str], now: datetime
 ) -> Task | None:
@@ -569,7 +578,7 @@ def pick_next_task(
         for t in candidates
         if t.slug in corrections
         or t.state.retry_after is None
-        or datetime.fromisoformat(t.state.retry_after) <= now
+        or (_parse_retry_after(t.state.retry_after) or now) <= now
     ]
     if not candidates:
         return None
@@ -1009,7 +1018,8 @@ def plan_tick(
         has_active_in_backoff = any(
             t.state.status == "active"
             and t.state.retry_after is not None
-            and datetime.fromisoformat(t.state.retry_after) > now
+            and (parsed := _parse_retry_after(t.state.retry_after)) is not None
+            and parsed > now
             for t in tasks
         )
         if has_active_in_backoff:
@@ -1195,7 +1205,7 @@ _TRANSIENT_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"ECONNRESET",
         r"ETIMEDOUT",
         r"\bDNS\b",
-        r"timeout",
+        r"(?:connection|request|read|connect)\s*time[d ]?\s*out",
     )
 )
 
@@ -1234,7 +1244,10 @@ def classify_cli_error(exit_code: int | None, error_text: str) -> ClassifyResult
     # usage limit with reset timestamp (checked first — takes priority)
     m = _USAGE_LIMIT_RE.search(error_text)
     if m:
-        return ClassifyResult("usage_limit", "usage limit hit", retry_after_iso=m.group(1))
+        ts = m.group(1)
+        if not ts.endswith("Z") and "+" not in ts:
+            ts = ts + "Z"
+        return ClassifyResult("usage_limit", "usage limit hit", retry_after_iso=ts)
 
     # transient patterns
     for pat in _TRANSIENT_PATTERNS:
