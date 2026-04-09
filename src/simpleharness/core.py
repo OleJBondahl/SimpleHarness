@@ -31,7 +31,7 @@ _VALID_APPROVER_MODELS = ("haiku", "sonnet", "opus")
 # permission rules. Users extend via config.yaml ``permissions.extra_bash_allow``.
 # Moved here from harness.py so the approver PreToolUse hook (which must not
 # depend on harness.py) can import it.
-DEFAULT_BASH_ALLOW: list[str] = [
+DEFAULT_BASH_ALLOW: tuple[str, ...] = (
     "git status",
     "git diff *",
     "git log *",
@@ -56,7 +56,7 @@ DEFAULT_BASH_ALLOW: list[str] = [
     "cat *",
     "* --version",
     "* --help *",
-]
+)
 
 
 @dataclass(frozen=True)
@@ -208,7 +208,7 @@ class SessionResult:
 # ────────────────────────────────────────────────────────────────────────────
 
 # Default tool names that are always allowed in safe mode.
-DEFAULT_TOOLS_ALLOW: list[str] = [
+DEFAULT_TOOLS_ALLOW: tuple[str, ...] = (
     "Edit",
     "Write",
     "MultiEdit",
@@ -217,7 +217,7 @@ DEFAULT_TOOLS_ALLOW: list[str] = [
     "Grep",
     "NotebookEdit",
     "Agent",
-]
+)
 
 
 @deal.pure
@@ -360,9 +360,11 @@ as described in your role instructions.
 def _build_allowlist(role: Role, config: Config) -> str:
     """Construct the --allowedTools value shared by safe and approver modes."""
     tools = (
-        DEFAULT_TOOLS_ALLOW + list(role.allowed_tools) + list(config.permissions.extra_tools_allow)
+        DEFAULT_TOOLS_ALLOW
+        + tuple(role.allowed_tools)
+        + tuple(config.permissions.extra_tools_allow)
     )
-    bash_patterns = DEFAULT_BASH_ALLOW + list(config.permissions.extra_bash_allow)
+    bash_patterns = DEFAULT_BASH_ALLOW + tuple(config.permissions.extra_bash_allow)
     dedup_tools = list(dict.fromkeys(tools))
     return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
 

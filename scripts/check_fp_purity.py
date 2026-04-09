@@ -34,11 +34,44 @@ def _has_deal_decorator(decorators: list[ast.expr]) -> bool:
 
 
 def _is_frozen_dataclass(decorators: list[ast.expr]) -> tuple[bool, bool]:
-    """Return (is_dataclass, is_frozen)."""
+    """Return (is_dataclass, is_frozen).
+
+    Recognizes both bare and qualified forms:
+    - @dataclass
+    - @dataclass(frozen=True)
+    - @dataclasses.dataclass
+    - @dataclasses.dataclass(frozen=True)
+    """
     for d in decorators:
+        # Bare form: @dataclass
         if isinstance(d, ast.Name) and d.id == "dataclass":
             return (True, False)
+        # Bare form with args: @dataclass(frozen=True)
         if isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "dataclass":
+            frozen = any(
+                isinstance(kw, ast.keyword)
+                and kw.arg == "frozen"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True
+                for kw in d.keywords
+            )
+            return (True, frozen)
+        # Qualified form: @dataclasses.dataclass
+        if (
+            isinstance(d, ast.Attribute)
+            and d.attr == "dataclass"
+            and isinstance(d.value, ast.Name)
+            and d.value.id == "dataclasses"
+        ):
+            return (True, False)
+        # Qualified form with args: @dataclasses.dataclass(frozen=True)
+        if (
+            isinstance(d, ast.Call)
+            and isinstance(d.func, ast.Attribute)
+            and d.func.attr == "dataclass"
+            and isinstance(d.func.value, ast.Name)
+            and d.func.value.id == "dataclasses"
+        ):
             frozen = any(
                 isinstance(kw, ast.keyword)
                 and kw.arg == "frozen"
