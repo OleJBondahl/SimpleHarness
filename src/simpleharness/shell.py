@@ -11,6 +11,7 @@ See README.md and the design plan for full architecture notes.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -38,6 +39,7 @@ from simpleharness.core import (
     build_rebrief_text,
     build_refinement_text,
     check_deliverables,
+    classify_cli_error,
     compute_post_session_state,
     format_task_dashboard,
     parse_task_spec,
@@ -204,6 +206,27 @@ def _update_blocked_tasks_index(worksite: Path) -> None:
     )
 
 
+def _extract_error_text(jsonl_path: Path) -> str:
+    """Extract error messages from a session's .jsonl log (I/O)."""
+    errors: list[str] = []
+    try:
+        for line in jsonl_path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "error":
+                error_obj = event.get("error", {})
+                msg = (
+                    error_obj.get("message", "") if isinstance(error_obj, dict) else str(error_obj)
+                )
+                if msg:
+                    errors.append(msg)
+    except OSError:
+        pass
+    return "\n".join(errors)
+
+
 def tick_once(worksite: Path, config: Config) -> bool:
     """One iteration of the loop. Returns True if we ran a session, False if idle."""
     tasks = tuple(discover_tasks(worksite))
@@ -303,6 +326,20 @@ def tick_once(worksite: Path, config: Config) -> bool:
             post_hash = state_hash(task.state_path)
             current_state = read_state(task.state_path)
 
+            # ── classify CLI errors for retry/backoff ────────────────────
+            classify_result = None
+            if not session.completed and not session.interrupted and session.exit_code != 0:
+                log_root = worksite_sh_dir(Path(task.state.worksite)) / "logs" / task.slug
+                jsonl_files = sorted(log_root.glob("*.jsonl")) if log_root.exists() else []
+                jsonl_log = jsonl_files[-1] if jsonl_files else log_root / "missing.jsonl"
+                error_text = _extract_error_text(jsonl_log)
+                classify_result = classify_cli_error(session.exit_code, error_text)
+                say(
+                    f"task {task.slug}: CLI error classified as {classify_result.outcome}"
+                    f" — {classify_result.reason}",
+                    style="yellow",
+                )
+
             new_state = compute_post_session_state(
                 current_state,
                 role.name,
@@ -313,6 +350,7 @@ def tick_once(worksite: Path, config: Config) -> bool:
                 post_hash=post_hash,
                 config=config,
                 now=datetime.now(UTC),
+                classify_result=classify_result,
             )
 
             # Warn only on the tick that first crosses the threshold, not every tick after.
