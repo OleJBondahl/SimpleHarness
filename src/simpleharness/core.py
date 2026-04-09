@@ -654,8 +654,9 @@ def build_session_prompt(
 - Actual changes in the worksite (code, prose, whatever the task calls for).
 - STATE.md updated narrowly: status, phase, next_role, blocked_reason only.
   Use Edit (not Write) to preserve the other fields the harness manages.
-- Git commits in the worksite with clear messages when your work is a
-  logical unit.
+- Before ending your session, commit all files you created or modified
+  (phase files, STATE.md, WORKSITE.md) with a clear message referencing
+  the task. Every session should leave a clean git state for the next agent.
 - WORKSITE.md (simpleharness/memory/WORKSITE.md) is cross-session memory.
   Before ending your session, update it with notes for the next agent:
   what you did, what state things are in, gotchas or decisions made.
