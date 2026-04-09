@@ -27,7 +27,7 @@ No source code, config, or container artifacts were created or changed.
 
 ## Commit hashes
 
-(Pending — commit to be created after this file.)
+`9a82119` — docs: refine dev-container spec against current codebase (task 001)
 
 ## Verdict
 
