@@ -22,6 +22,12 @@ from pathlib import Path
 
 import yaml
 
+from simpleharness.benchmark import (
+    discover_benchmark_repos,
+    format_summary,
+    run_all_benchmarks,
+    write_results,
+)
 from simpleharness.core import (
     Config,
     State,
@@ -609,6 +615,38 @@ def cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_benchmark_run(args: argparse.Namespace) -> int:
+    benchmarks_dir = Path(args.benchmarks_dir).resolve()
+    if not benchmarks_dir.exists():
+        err(f"benchmarks directory not found: {benchmarks_dir}")
+        return 1
+
+    repos = discover_benchmark_repos(benchmarks_dir)
+    if not repos:
+        err("no benchmark repos found")
+        return 1
+
+    say(f"Running {len(repos)} benchmark task(s)...", style="bold")
+    run = run_all_benchmarks(benchmarks_dir)
+
+    # Write results
+    results_dir = benchmarks_dir / "results"
+    result_path = write_results(run, results_dir)
+    say(f"Results written to {result_path}", style="green")
+
+    # Print summary
+    say(format_summary(run))
+    return 0
+
+
+def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
+    # For now, just a stub that prints guidance
+    say("Benchmark analysis not yet integrated with harness sessions.", style="yellow")
+    say("To analyze manually, review the latest results in benchmarks/results/")
+    # TODO: spawn analyst role session with latest results + traces
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     worksite = worksite_root(args)
     config = load_config(worksite)
@@ -846,6 +884,29 @@ def build_argparser() -> argparse.ArgumentParser:
 
     re_ = sub.add_parser("resume", parents=[common], help="Resume a paused watch loop")
     re_.set_defaults(func=cmd_resume)
+
+    # Benchmark commands
+    p_bench = sub.add_parser("benchmark", help="run benchmark suite and analyze results")
+    bench_sub = p_bench.add_subparsers(dest="bench_action")
+
+    p_bench_run = bench_sub.add_parser("run", help="run all benchmark tasks and score results")
+    p_bench_run.add_argument(
+        "--benchmarks-dir",
+        metavar="PATH",
+        default="benchmarks",
+        help="path to benchmarks directory (default: benchmarks/)",
+    )
+    p_bench_run.set_defaults(func=cmd_benchmark_run)
+
+    p_bench_analyze = bench_sub.add_parser(
+        "analyze", help="analyze results and propose improvements"
+    )
+    p_bench_analyze.add_argument(
+        "--results",
+        metavar="PATH",
+        help="path to benchmark-results.json (default: latest in benchmarks/results/)",
+    )
+    p_bench_analyze.set_defaults(func=cmd_benchmark_analyze)
 
     return p
 
