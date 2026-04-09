@@ -546,11 +546,12 @@ def build_claude_cmd(
     elif mode == "approver":
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
-        if approver_settings_path is not None:
-            cmd += ["--settings", str(approver_settings_path)]
     else:
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
+
+    if approver_settings_path is not None:
+        cmd += ["--settings", str(approver_settings_path)]
 
     return cmd
 
@@ -578,6 +579,154 @@ def _format_tool_call(tname: str, tinput: dict[str, Any]) -> str:
         desc = str(tinput.get("description", "") or tinput.get("prompt", ""))
         return f"[{model}] {desc[:80]}"
     return json.dumps(tinput, ensure_ascii=False)[:200]
+
+
+@deal.pure
+def build_subagent_export_body(subagent: Subagent) -> str:
+    """Render the body written to <worksite>/.claude/agents/<name>.md.
+
+    Prepends a '## Skill Requirements' section derived from subagent.skills to
+    the original body so the subagent sees its required/available skills
+    without needing a SessionStart hook (SessionStart doesn't fire for subagents).
+
+    If skills.available and skills.must_use are both empty, return the original
+    body unchanged.
+    """
+    if not subagent.skills.available and not subagent.skills.must_use:
+        return subagent.body
+
+    lines: list[str] = ["## Skill Requirements", ""]
+    if subagent.skills.must_use:
+        lines.append("You MUST invoke these skills before finishing:")
+        for name in subagent.skills.must_use:
+            lines.append(f"- {name}")
+        lines.append("")
+    if subagent.skills.available:
+        lines.append("Available skills (invoke via the Skill tool):")
+        for skill in subagent.skills.available:
+            entry = f"- {skill.name}"
+            if skill.hint:
+                entry += f": {skill.hint}"
+            lines.append(entry)
+        lines.append("")
+    lines.append("")
+    return "\n".join(lines) + subagent.body
+
+
+@deal.pure
+def build_subagent_export_frontmatter(subagent: Subagent) -> dict[str, Any]:
+    """Return only the fields Claude Code's .claude/agents/ format understands.
+
+    Specifically: name, description, tools (joined comma-string), model (if set).
+    Strips SimpleHarness-only fields (privileged, invocation, skills, source_path).
+    """
+    fm: dict[str, Any] = {"name": subagent.name}
+    if subagent.description:
+        fm["description"] = subagent.description
+    if subagent.tools:
+        fm["tools"] = ", ".join(subagent.tools)
+    if subagent.model:
+        fm["model"] = subagent.model
+    return fm
+
+
+@deal.pure
+def build_exported_subagent_file(subagent: Subagent) -> str:
+    """Full file contents for <worksite>/.claude/agents/<name>.md.
+
+    Renders Claude-Code-compatible frontmatter + body (with baked skill reminder).
+    """
+    fm = build_subagent_export_frontmatter(subagent)
+    fm_lines: list[str] = []
+    for k, v in fm.items():
+        fm_lines.append(f"{k}: {v}")
+    frontmatter_block = "---\n" + "\n".join(fm_lines) + "\n---\n"
+    body = build_subagent_export_body(subagent)
+    return frontmatter_block + body
+
+
+@deal.pure
+def build_session_hooks_config(
+    enforcement_mode: str,
+    python_executable: str,
+    existing_hooks: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the merged 'hooks' block to write into settings JSON.
+
+    - If enforcement_mode == 'off': no skill hooks are added. Return existing_hooks
+      unchanged (or empty dict if None).
+    - Otherwise: merge SessionStart, Stop, and SubagentStop entries for the
+      simpleharness hook scripts into existing_hooks. Preserves any entries
+      already present (e.g. the approver's PreToolUse Bash hook).
+    """
+    base: dict[str, Any] = dict(existing_hooks) if existing_hooks else {}
+    if enforcement_mode == "off":
+        return base
+
+    def _hook(module: str) -> dict[str, Any]:
+        return {"type": "command", "command": f"{python_executable} -m {module}"}
+
+    for event, module in (
+        ("SessionStart", "simpleharness.hooks.inform_skills"),
+        ("Stop", "simpleharness.hooks.enforce_must_use"),
+        ("SubagentStop", "simpleharness.hooks.enforce_must_use"),
+    ):
+        entry = [_hook(module)]
+        if event in base:
+            base[event] = list(base[event]) + entry
+        else:
+            base[event] = entry
+    return base
+
+
+@deal.pure
+def build_session_env(
+    base_env: dict[str, str],
+    role: Role,
+    subagents: tuple[Subagent, ...],
+    config: Config,
+) -> dict[str, str]:
+    """Return a new env dict with SimpleHarness vars added for the child session.
+
+    Starts from base_env, adds:
+        SIMPLEHARNESS_ROLE              = role.name
+        SIMPLEHARNESS_AVAILABLE_SKILLS  = JSON of merged skills.available
+                                          ({name, hint} dicts)
+        SIMPLEHARNESS_MUST_USE_MAIN     = JSON list of merged skills.must_use names
+        SIMPLEHARNESS_MUST_USE_SUB      = JSON object mapping subagent name →
+                                          merged must_use list
+        SIMPLEHARNESS_ENFORCEMENT       = config.skills.enforcement
+
+    'Merged' means: merge_skill_lists(role.skills, SkillList(
+        available=config.skills.default_available,
+        must_use=config.skills.default_must_use,
+    )).
+
+    Does not mutate base_env; returns a new dict.
+    """
+    defaults = SkillList(
+        available=config.skills.default_available,
+        must_use=config.skills.default_must_use,
+    )
+    merged_role = merge_skill_lists(role.skills, defaults)
+
+    available_json = json.dumps([{"name": s.name, "hint": s.hint} for s in merged_role.available])
+    must_use_main_json = json.dumps(list(merged_role.must_use))
+
+    must_use_sub: dict[str, list[str]] = {}
+    for sa in subagents:
+        merged_sa = merge_skill_lists(sa.skills, defaults)
+        must_use_sub[sa.name] = list(merged_sa.must_use)
+    must_use_sub_json = json.dumps(must_use_sub)
+
+    return {
+        **base_env,
+        "SIMPLEHARNESS_ROLE": role.name,
+        "SIMPLEHARNESS_AVAILABLE_SKILLS": available_json,
+        "SIMPLEHARNESS_MUST_USE_MAIN": must_use_main_json,
+        "SIMPLEHARNESS_MUST_USE_SUB": must_use_sub_json,
+        "SIMPLEHARNESS_ENFORCEMENT": config.skills.enforcement,
+    }
 
 
 @deal.pure

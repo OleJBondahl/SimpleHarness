@@ -47,6 +47,9 @@ from simpleharness.core import (
     _format_tool_call,
     _slugify,
     build_claude_cmd,
+    build_exported_subagent_file,
+    build_session_env,
+    build_session_hooks_config,
     build_session_prompt,
     compute_post_session_state,
     parse_skill_list,
@@ -65,13 +68,13 @@ from simpleharness.core import (
     Skill as Skill,  # re-export
 )
 from simpleharness.core import (
-    SkillList as SkillList,  # re-export
+    SkillList as SkillList,  # re-export (keep for downstream consumers)
 )
 from simpleharness.core import (
     _merge_config as _merge_config,  # re-export
 )
 from simpleharness.core import (
-    merge_skill_lists as merge_skill_lists,  # re-export
+    merge_skill_lists as merge_skill_lists,  # re-export (keep for downstream consumers)
 )
 from simpleharness.core import (
     parse_frontmatter as parse_frontmatter,  # re-export
@@ -710,31 +713,51 @@ def list_phase_files(task_folder: Path) -> list[Path]:
     return sorted(out, key=lambda p: p.name)
 
 
-def _write_approver_settings(task_dir: Path) -> Path:
+def _write_approver_settings(task_dir: Path, enforcement_mode: str = "off") -> Path:
     """Write .approver-settings.json registering the PreToolUse hook.
 
     The hook is scoped to the Bash matcher only — other tools flow
-    through the normal --allowedTools check. Lifecycle mirrors
-    .session_prompt.md: overwritten each session, left on disk for
-    post-hoc debugging. Returns the path to the written file.
+    through the normal --allowedTools check. Also merges skill enforcement
+    hooks (SessionStart/Stop/SubagentStop) when enforcement_mode != 'off'.
+    Lifecycle mirrors .session_prompt.md: overwritten each session, left on
+    disk for post-hoc debugging. Returns the path to the written file.
     """
     hook_script = (toolbox_root() / "simpleharness_approver_hook.sh").as_posix()
-    settings = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": f"bash {hook_script}",
-                        }
-                    ],
-                }
-            ]
-        }
+    approver_hooks: dict[str, Any] = {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"bash {hook_script}",
+                    }
+                ],
+            }
+        ]
     }
+    merged_hooks = build_session_hooks_config(
+        enforcement_mode, sys.executable, existing_hooks=approver_hooks
+    )
+    settings = {"hooks": merged_hooks}
     out_path = task_dir / ".approver-settings.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    return out_path
+
+
+def _write_session_settings(task_dir: Path, enforcement_mode: str) -> Path | None:
+    """Write .session-settings.json with skill hooks for non-approver modes.
+
+    Returns the path to the written file, or None if enforcement is 'off'
+    (nothing to register).
+    """
+    if enforcement_mode == "off":
+        return None
+    hooks = build_session_hooks_config(enforcement_mode, sys.executable)
+    settings = {"hooks": hooks}
+    out_path = task_dir / ".session-settings.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
@@ -1014,14 +1037,32 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     jsonl_log = log_root / f"{stem}.jsonl"
     plain_log = log_root / f"{stem}.log"
 
-    # 4. build command — pre-write approver files in shell before calling core
+    # 4. export subagents to <worksite>/.claude/agents/
+    subagents = load_all_subagents()
+    if subagents:
+        agents_dir = Path(task.state.worksite) / ".claude" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        defaults = SkillList(
+            available=config.skills.default_available,
+            must_use=config.skills.default_must_use,
+        )
+        for sa in subagents:
+            merged_sa = merge_skill_lists(sa.skills, defaults)
+            exported_sa = replace(sa, skills=merged_sa)
+            content = build_exported_subagent_file(exported_sa)
+            (agents_dir / f"{sa.name}.md").write_text(content, encoding="utf-8")
+
+    # 5. build command — pre-write approver/session settings files before calling core
     session_id = str(uuid.uuid4())
+    enforcement_mode = config.skills.enforcement
     if config.permissions.mode == "approver":
         bash_patterns = list(DEFAULT_BASH_ALLOW) + list(config.permissions.extra_bash_allow)
         write_approver_allowlist(task.folder, bash_patterns)
-        approver_settings_path = _write_approver_settings(task.folder)
+        approver_settings_path: Path | None = _write_approver_settings(
+            task.folder, enforcement_mode
+        )
     else:
-        approver_settings_path = None
+        approver_settings_path = _write_session_settings(task.folder, enforcement_mode)
     cmd = build_claude_cmd(
         prompt_file,
         role,
@@ -1031,7 +1072,7 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
         approver_settings_path=approver_settings_path,
     )
 
-    # 5. banner
+    # 6. banner
     console.rule(f"[cyan]session {idx + 1}  [bold]{role.name}[/]  task={task.slug}")
     say(
         f"model={config.model}  session_id={session_id[:8]}  max_turns={role.max_turns or config.max_turns_default}"
@@ -1039,20 +1080,18 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     if correction:
         say("CORRECTION.md was consumed and injected into this session's prompt.", style="yellow")
 
-    # 6. env exports (approver mode only — mirror the vars Claude Code will
-    # pass to the MCP server, so anything running in-process downstream sees
-    # the same values)
-    extra_env: dict[str, str] | None = None
+    # 7. env exports — skill vars always; approver-only vars only in approver mode
+    approver_base: dict[str, str] = {}
     if config.permissions.mode == "approver":
-        extra_env = {
+        approver_base = {
             "SIMPLEHARNESS_STREAM_LOG": str(jsonl_log),
             "SIMPLEHARNESS_WORKSITE": str(Path(task.state.worksite)),
             "SIMPLEHARNESS_APPROVER_MODEL": config.permissions.approver_model,
-            "SIMPLEHARNESS_ROLE": role.name,
             "SIMPLEHARNESS_TASK_SLUG": task.slug,
         }
+    extra_env: dict[str, str] = build_session_env(approver_base, role, subagents, config)
 
-    # 7. spawn + stream
+    # 8. spawn + stream
     proc = spawn_claude(cmd, Path(task.state.worksite), extra_env=extra_env)
     interrupted = False
     result_session_id: str | None = None
