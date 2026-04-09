@@ -361,15 +361,7 @@ def _build_allowlist(role: Role, config: Config) -> str:
     """Construct the --allowedTools value shared by safe and approver modes."""
     tools = DEFAULT_TOOLS_ALLOW + role.allowed_tools + config.permissions.extra_tools_allow
     bash_patterns = DEFAULT_BASH_ALLOW + config.permissions.extra_bash_allow
-    seen: set[str] = set()
-
-    def _dedup(t: str) -> bool:
-        if t in seen:
-            return False
-        seen.add(t)
-        return True
-
-    dedup_tools = [t for t in tools if _dedup(t)]
+    dedup_tools = list(dict.fromkeys(tools))
     return ",".join(dedup_tools + [f"Bash({p})" for p in bash_patterns])
 
 

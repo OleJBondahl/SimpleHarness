@@ -98,6 +98,8 @@ def unwrap_wrappers(tokens: list[str], max_depth: int = 8) -> list[str]:
     return cur
 
 
+# @deal.has() (not pure): deal cannot prove shlex.split is effect-free
+# even though we catch its ValueError. Function is in practice pure.
 @deal.has()
 def command_signature(command: str) -> str:
     """Return the base-command signature for e.g. FAKE-mode pattern synthesis.
@@ -128,6 +130,9 @@ def _deny_synthetic(reason: str) -> Verdict:
     return Verdict(decision="deny", pattern="", reason=reason)
 
 
+# @deal.has() (not pure): conservative annotation — deal cannot prove
+# json.loads and re.findall are effect-free. Function never raises
+# at runtime; all error paths return _deny_synthetic(...).
 @deal.has()
 def parse_verdict(final_message: str) -> Verdict:
     """Extract and validate the approver's JSON verdict.
