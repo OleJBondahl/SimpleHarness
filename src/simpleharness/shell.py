@@ -180,6 +180,9 @@ def load_subagent(name: str) -> Subagent:
         body=body.strip(),
         description=str(meta.get("description", "")),
         model=meta.get("model"),
+        # Intentional backward-compatibility: accept role-style `allowed_tools:`
+        # frontmatter as a fallback when `tools:` is absent, so subagent files
+        # written in the same style as roles still load correctly.
         tools=tuple(meta.get("tools", meta.get("allowed_tools", [])) or []),
         source_path=path,
         skills=skills,

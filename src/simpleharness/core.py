@@ -173,7 +173,9 @@ def parse_skill_list(raw: Any) -> SkillList:
     """Parse the `skills:` block from frontmatter into a SkillList.
 
     Accepts the raw dict (or None) read from YAML.
-    Missing or malformed sub-fields silently become empty.
+    Missing sub-fields become empty (zero-value defaults).
+    Malformed sub-fields (wrong type, missing required keys) raise ``ValueError``
+    with a message identifying the offending field.
     """
     if raw is None:
         return SkillList()

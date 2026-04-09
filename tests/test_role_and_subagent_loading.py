@@ -68,6 +68,21 @@ def test_load_subagent_loads_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert sa.skills == SkillList()
 
 
+def test_load_subagent_allowed_tools_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Subagent files written with role-style `allowed_tools:` (not `tools:`)
+    # must still populate subagent.tools via the backward-compat fallback.
+    monkeypatch.setattr("simpleharness.core._TOOLBOX_ROOT", tmp_path)
+    _write_md(
+        tmp_path / "subagents" / "compat.md",
+        ("name: compat\ndescription: Compat test.\nallowed_tools:\n  - Read\n  - Write\n"),
+        "You are a compat subagent.",
+    )
+    sa = load_subagent("compat")
+    assert sa.tools == ("Read", "Write")
+
+
 def test_load_subagent_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("simpleharness.core._TOOLBOX_ROOT", tmp_path)
     (tmp_path / "subagents").mkdir()

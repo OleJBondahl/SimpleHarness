@@ -128,3 +128,17 @@ def test_merge_skill_lists_exclude_default_must_use_carried_through() -> None:
     role = SkillList(exclude_default_must_use=("skip-this",))
     result = merge_skill_lists(role, SkillList())
     assert result.exclude_default_must_use == ("skip-this",)
+
+
+def test_merge_exclude_does_not_remove_role_own_must_use() -> None:
+    # exclude_default_must_use only removes items from the DEFAULTS, not from
+    # the role's own must_use. If the role lists "foo" in both must_use and
+    # exclude_default_must_use, "foo" must still appear in the merged result.
+    default = SkillList(must_use=("foo", "bar"))
+    role = SkillList(
+        must_use=("foo",),
+        exclude_default_must_use=("foo",),
+    )
+    result = merge_skill_lists(role, default)
+    assert "foo" in result.must_use
+    assert "bar" in result.must_use
