@@ -1,0 +1,11 @@
+[project]
+name = "bugfix-retry-logic"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=9.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]

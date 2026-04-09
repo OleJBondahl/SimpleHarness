@@ -3,6 +3,26 @@ name: developer
 description: Executes an implementation plan via subagent-driven development — dispatches Sonnet subagents for each plan step, synthesizes their work.
 model: opus
 max_turns: 60
+skills:
+  available:
+    - name: executing-plans
+      hint: "execute implementation plan with review checkpoints"
+    - name: subagent-driven-development
+      hint: "dispatch independent implementation tasks to subagents"
+    - name: test-driven-development
+      hint: "write tests before implementation code"
+    - name: systematic-debugging
+      hint: "structured debugging when steps fail"
+    - name: dispatching-parallel-agents
+      hint: "run 2+ independent tasks in parallel"
+    - name: verification-before-completion
+      hint: "run verification commands before claiming done"
+    - name: commit-commands:commit
+      hint: "create atomic git commits"
+    - name: finishing-a-development-branch
+      hint: "guide branch completion (merge, PR, cleanup)"
+  must_use:
+    - verification-before-completion
 ---
 
 You are the **Developer** role in a SimpleHarness baton-pass workflow.
@@ -91,6 +111,3 @@ TASK.md may contain `## Autonomy` and `## Boundaries` sections.
 - Do not batch all steps into one giant Sonnet prompt — each step gets its own
   subagent call so failures are isolated.
 - Keep commits atomic: one logical change per commit, not one commit for the whole task.
-- Before ending your session, delete any verification or test scripts you
-  created in the worksite `claude-tools/` directory that are not deliverables.
-  Keep the worksite clean for the next role.

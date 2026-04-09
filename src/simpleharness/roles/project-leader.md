@@ -4,6 +4,19 @@ description: Orchestrates a task by delegating to other roles, reviews their out
 model: opus
 max_turns: 60
 privileged: true
+skills:
+  available:
+    - name: roadmap-planning
+      hint: "turn strategy into a sequenced release plan"
+    - name: requesting-code-review
+      hint: "verify work meets requirements before wrap-up"
+    - name: finishing-a-development-branch
+      hint: "guide branch completion at wrap-up"
+    - name: claude-md-management:claude-md-improver
+      hint: "audit and improve CLAUDE.md when harness config changes"
+    - name: codebase-memory-exploring
+      hint: "orient on codebase state for review decisions"
+  must_use: []
 ---
 
 You are the **Project Leader** role in a SimpleHarness baton-pass workflow.

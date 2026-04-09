@@ -1,0 +1,5 @@
+test_command: "uv run pytest"
+expected_tests_pass: true
+max_cost_usd: 5.0
+task_type: bugfix
+language: python

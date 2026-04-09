@@ -587,6 +587,7 @@ def build_session_prompt(
     correction_text: str | None,
     phase_files: list[Path],
     phase_previews: Mapping[str, str] | None = None,
+    worksite_memory_preview: str | None = None,
 ) -> str:
     """Assemble the spatial-awareness preamble + phase instructions.
 
@@ -624,6 +625,12 @@ def build_session_prompt(
             "-----------------------------------------------------------------\n\n"
         )
 
+    worksite_memory_block = ""
+    if worksite_memory_preview:
+        worksite_memory_block = (
+            f"\n## Cross-session memory (WORKSITE.md)\n```\n{worksite_memory_preview}\n```\n"
+        )
+
     prompt = f"""{correction_block}You are running inside SimpleHarness, a baton-pass agent harness.
 
 ## Where you are
@@ -639,7 +646,7 @@ def build_session_prompt(
 - TASK.md (user's brief, read only)
 - STATE.md (you may Edit: status, phase, next_role, blocked_reason ONLY)
 {existing_section}
-
+{worksite_memory_block}
 ## What you must produce this session
 - Your own phase file (e.g., 0X-{role.name.replace("-", "_")}.md or similar):
   a concise record of what you did, decisions, files touched, subagents
@@ -649,10 +656,11 @@ def build_session_prompt(
   Use Edit (not Write) to preserve the other fields the harness manages.
 - Git commits in the worksite with clear messages when your work is a
   logical unit.
-- If a WORKSITE.md memory file exists in the simpleharness/memory/ folder,
-  update it as your LAST action before ending the session (after all code
-  changes are committed). Never write WORKSITE.md mid-session — your notes
-  will become stale if you make further changes afterward.
+- WORKSITE.md (simpleharness/memory/WORKSITE.md) is cross-session memory.
+  Before ending your session, update it with notes for the next agent:
+  what you did, what state things are in, gotchas or decisions made.
+  Write it after your main work is done. Keep it concise — a handoff memo,
+  not a diary.
 
 ## Subagent delegation (READ THIS)
 You are running on Opus — expensive context. BEFORE doing heavy reading or
