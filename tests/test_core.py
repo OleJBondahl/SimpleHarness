@@ -630,3 +630,80 @@ def test_build_claude_cmd_session_id_included():
     )
     assert "--session-id" in cmd
     assert "my-session-id" in cmd
+
+
+def test_build_claude_cmd_approver_mode_no_settings():
+    from simpleharness.core import Role
+
+    role = Role(name="developer", body="dev")
+    cfg = Config(permissions=Permissions(mode="approver"))
+    cmd = build_claude_cmd(
+        Path("/task/.session_prompt.md"),
+        role,
+        Path("/toolbox"),
+        "sess-789",
+        cfg,
+        approver_settings_path=None,
+    )
+    assert "acceptEdits" in cmd
+    assert "--settings" not in cmd
+
+
+def test_build_claude_cmd_approver_mode_with_settings():
+    from simpleharness.core import Role
+
+    role = Role(name="developer", body="dev")
+    cfg = Config(permissions=Permissions(mode="approver"))
+    settings_path = Path("/tmp/approver_settings.json")
+    cmd = build_claude_cmd(
+        Path("/task/.session_prompt.md"),
+        role,
+        Path("/toolbox"),
+        "sess-789",
+        cfg,
+        approver_settings_path=settings_path,
+    )
+    assert "acceptEdits" in cmd
+    assert "--settings" in cmd
+    assert str(settings_path) in cmd
+
+
+# ── _format_tool_call: Glob/Grep ──────────────────────────────────────────────
+
+
+def test_format_tool_call_glob_with_path():
+    result = _format_tool_call("Glob", {"pattern": "**/*.py", "path": "/src"})
+    assert "**/*.py" in result
+    assert "/src" in result
+
+
+def test_format_tool_call_glob_no_path():
+    result = _format_tool_call("Glob", {"pattern": "*.md"})
+    assert result == "*.md"
+
+
+def test_format_tool_call_grep():
+    result = _format_tool_call("Grep", {"pattern": "def foo", "path": "/src"})
+    assert "def foo" in result
+    assert "/src" in result
+
+
+# ── parse_frontmatter: non-dict YAML ─────────────────────────────────────────
+
+
+def test_parse_frontmatter_non_dict_yaml():
+    # YAML that parses to a list, not a dict
+    text = "---\n- item1\n- item2\n---\nbody"
+    with pytest.raises(ValueError, match="frontmatter must be a mapping"):
+        parse_frontmatter(text)
+
+
+# ── toolbox_root ──────────────────────────────────────────────────────────────
+
+
+def test_toolbox_root_returns_path():
+    from simpleharness.core import toolbox_root
+
+    result = toolbox_root()
+    assert isinstance(result, Path)
+    assert result.is_absolute()

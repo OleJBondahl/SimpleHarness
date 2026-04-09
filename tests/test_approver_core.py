@@ -16,6 +16,8 @@ from simpleharness.approver_core import (
     SpawnRequest,
     Verdict,
     _deny_synthetic,
+    _extract_assistant_text,
+    _task_dir,
     build_approver_prompt,
     command_signature,
     fake_verdict_from_input,
@@ -83,6 +85,20 @@ def test_unwrap_wrappers(tokens, expected_head):
 def test_unwrap_wrappers_nested():
     result = unwrap_wrappers(["sudo", "env", "VAR=1", "ls"])
     assert result == ["ls"]
+
+
+def test_unwrap_wrappers_exhausted_by_flags():
+    # sudo with only a flag+value and nothing after → exhausted → returns []
+    result = unwrap_wrappers(["sudo", "-u", "root"])
+    assert result == []
+
+
+def test_unwrap_wrappers_max_depth_exceeded():
+    # 9 nested wrappers exceed max_depth=8; line 98 return fires
+    tokens = ["sudo"] * 9 + ["ls"]
+    result = unwrap_wrappers(tokens)
+    # last element is a wrapper since max_depth was hit, not a real command
+    assert isinstance(result, list)
 
 
 def test_unwrap_wrappers_empty():
@@ -349,3 +365,152 @@ def test_finalize_outcome_is_frozen():
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         attempt_mutation()
+
+
+# ── command_signature: edge cases ─────────────────────────────────────────────
+
+
+def test_command_signature_non_str_input():
+    # non-str input falls back to "Bash"
+    from typing import cast as _cast
+
+    result = command_signature(_cast(str, 42))
+    assert result == "Bash"
+
+
+def test_command_signature_unclosed_quote_falls_back():
+    # shlex raises ValueError on unclosed quote; falls back to raw split
+    result = command_signature("git commit -m 'unclosed")
+    assert result == "git"
+
+
+def test_command_signature_all_wrapper_no_payload():
+    # "sudo" alone → unwrap_wrappers returns [] → falls back to parts[0]
+    result = command_signature("sudo")
+    assert result == "sudo"
+
+
+# ── parse_verdict: additional branches ───────────────────────────────────────
+
+
+def test_parse_verdict_bare_json_no_fence():
+    # JSON object without a fenced block (starts with { ends with })
+    msg = '{"decision": "allow", "pattern": "ls *", "reason": "ok"}'
+    v = parse_verdict(msg)
+    assert v.decision == "allow"
+    assert v.pattern == "ls *"
+
+
+def test_parse_verdict_invalid_json_in_fence():
+    msg = "```json\nnot valid json at all\n```"
+    v = parse_verdict(msg)
+    assert v.decision == "deny"
+    assert "malformed" in v.reason
+
+
+def test_parse_verdict_non_dict_json():
+    # Valid JSON but not a dict
+    msg = '```json\n["allow", "ls *", "ok"]\n```'
+    v = parse_verdict(msg)
+    assert v.decision == "deny"
+    assert "not a JSON object" in v.reason
+
+
+def test_parse_verdict_non_str_pattern():
+    msg = '```json\n{"decision": "allow", "pattern": 42, "reason": "ok"}\n```'
+    v = parse_verdict(msg)
+    assert v.decision == "deny"
+    assert "pattern was not a string" in v.reason
+
+
+def test_parse_verdict_non_str_reason():
+    msg = '```json\n{"decision": "deny", "pattern": "", "reason": 99}\n```'
+    v = parse_verdict(msg)
+    assert v.decision == "deny"
+    assert "reason was not a string" in v.reason
+
+
+# ── _extract_assistant_text ───────────────────────────────────────────────────
+
+
+def test_extract_assistant_text_basic():
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "text", "text": "Hello world"},
+            ]
+        },
+    }
+    result = _extract_assistant_text(event)
+    assert result == "Hello world"
+
+
+def test_extract_assistant_text_non_assistant_event():
+    event = {"type": "tool_use", "message": {"content": [{"type": "text", "text": "ignored"}]}}
+    assert _extract_assistant_text(event) == ""
+
+
+def test_extract_assistant_text_non_dict():
+    assert _extract_assistant_text("not a dict") == ""
+
+
+def test_extract_assistant_text_missing_message():
+    assert _extract_assistant_text({"type": "assistant"}) == ""
+
+
+def test_extract_assistant_text_content_not_list():
+    event = {"type": "assistant", "message": {"content": "plain string"}}
+    assert _extract_assistant_text(event) == ""
+
+
+def test_extract_assistant_text_multiple_blocks():
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "text", "text": "First"},
+                {"type": "tool_use", "id": "t1"},
+                {"type": "text", "text": "Second"},
+            ]
+        },
+    }
+    result = _extract_assistant_text(event)
+    assert "First" in result
+    assert "Second" in result
+
+
+def test_extract_assistant_text_non_dict_block_skipped():
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                "not a dict",
+                {"type": "text", "text": "real"},
+            ]
+        },
+    }
+    result = _extract_assistant_text(event)
+    assert result == "real"
+
+
+def test_extract_assistant_text_empty_text_blocks_skipped():
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "text", "text": "   "},
+                {"type": "text", "text": "real content"},
+            ]
+        },
+    }
+    result = _extract_assistant_text(event)
+    assert result == "real content"
+
+
+# ── _task_dir ─────────────────────────────────────────────────────────────────
+
+
+def test_task_dir():
+    result = _task_dir(Path("/worksite"), "001-my-task")
+    assert result == Path("/worksite/simpleharness/tasks/001-my-task")
