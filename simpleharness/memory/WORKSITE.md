@@ -15,3 +15,10 @@ Long-term notes that every session can read.
 - Security fix: `safe.directory` wildcard → explicit paths; `.env` added to `.dockerignore` (`b1ce978`).
 - **Pre-merge gates (not yet run):** `shellcheck`, `docker compose config`, `docker compose build` — blocked by session permissions in all phases. Must run manually before merging.
 - Branch is 13 commits ahead of `origin/feature/dev-container`.
+
+## Task 003 — CLI error classifier and retry backoff (in progress)
+
+- **Kickoff complete.** Design spec is `docs/dev-container.md` §12 — very detailed, covers classifier function, STATE.md fields, backoff schedule, and watch-loop changes.
+- Next: brainstormer validates the spec's assumptions against current codebase (core.py, shell.py, session.py) and flags any gaps or blockers.
+- Key "must block" conditions: if watch loop can't support per-task skip without major refactor, if STATE.md parser needs breaking changes, if classifier needs data not currently captured, or if changes would break the approver hook.
+- Branch: `feature/dev-container` (same as tasks 001/002).

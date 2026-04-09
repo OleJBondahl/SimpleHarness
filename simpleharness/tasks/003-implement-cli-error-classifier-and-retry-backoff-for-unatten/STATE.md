@@ -4,9 +4,9 @@ workflow: feature-build
 worksite: C:\Users\OleJohanBondahl\Documents\Github_OJ\SimpleHarness
 toolbox: C:\Users\OleJohanBondahl\Documents\Github_OJ\SimpleHarness\src\simpleharness
 status: active
-phase: kickoff
-next_role: null
-last_role: null
+phase: brainstorm
+next_role: brainstormer
+last_role: project-leader
 total_sessions: 0
 session_cap: 20
 created: '2026-04-09T14:04:26Z'
