@@ -295,8 +295,32 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
             phase_previews[pf.name] = "\n".join(preview_lines)
         except OSError:
             pass
+    # Read WORKSITE.md cross-session memory for prompt preview
+    worksite_memory_preview: str | None = None
+    memory_path = worksite_sh_dir(Path(task.state.worksite)) / "memory" / "WORKSITE.md"
+    if memory_path.exists():
+        try:
+            raw = memory_path.read_text(encoding="utf-8")
+            raw_lines = raw.splitlines()
+            # Skip if it's just the template header with no real content
+            content_lines = [ln for ln in raw_lines if ln.strip() and not ln.startswith("# ")]
+            if content_lines:
+                preview_lines = raw_lines[:20]
+                if len(raw_lines) > 20:
+                    preview_lines.append("... (truncated)")
+                worksite_memory_preview = "\n".join(preview_lines)
+        except OSError:
+            pass
+
     prompt = build_session_prompt(
-        task, role, workflow, toolbox, correction, phase_files, phase_previews
+        task,
+        role,
+        workflow,
+        toolbox,
+        correction,
+        phase_files,
+        phase_previews,
+        worksite_memory_preview=worksite_memory_preview,
     )
     prompt_file = write_session_prompt_file(task, prompt)
 

@@ -441,6 +441,7 @@ def cmd_new(args: argparse.Namespace) -> int:
         session_cap=20,
         created=now_iso(),
         updated=now_iso(),
+        total_cost_usd=0.0,
     )
     write_state(folder / "STATE.md", state)
     say(f"created task {slug} at {folder}")

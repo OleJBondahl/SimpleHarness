@@ -644,6 +644,45 @@ def test_build_session_prompt_without_previews_still_works():
     assert "00-kickoff.md" in prompt
 
 
+def test_build_session_prompt_with_worksite_memory_preview():
+    from simpleharness.core import Role
+
+    task = _task()
+    role = Role(name="developer", body="dev")
+    wf = _workflow()
+    preview = "line one\nline two\nline three"
+    prompt = build_session_prompt(
+        task, role, wf, Path("/toolbox"), None, [], worksite_memory_preview=preview
+    )
+    assert "Cross-session memory" in prompt
+    assert "line one" in prompt
+    assert "line three" in prompt
+
+
+def test_build_session_prompt_worksite_memory_preview_none():
+    from simpleharness.core import Role
+
+    task = _task()
+    role = Role(name="developer", body="dev")
+    wf = _workflow()
+    prompt = build_session_prompt(
+        task, role, wf, Path("/toolbox"), None, [], worksite_memory_preview=None
+    )
+    assert "Cross-session memory" not in prompt
+
+
+def test_build_session_prompt_worksite_memory_preview_empty():
+    from simpleharness.core import Role
+
+    task = _task()
+    role = Role(name="developer", body="dev")
+    wf = _workflow()
+    prompt = build_session_prompt(
+        task, role, wf, Path("/toolbox"), None, [], worksite_memory_preview=""
+    )
+    assert "Cross-session memory" not in prompt
+
+
 # ── build_claude_cmd ──────────────────────────────────────────────────────────
 
 
