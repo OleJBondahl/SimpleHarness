@@ -12,7 +12,8 @@ export PATH="/home/harness/.local/bin:${PATH}"
 # bind-mounted files from looking "modified" on `git status`. safe.directory
 # sidesteps ownership mismatches on bind mounts.
 git config --global core.autocrlf input
-git config --global --add safe.directory '*'
+git config --global --add safe.directory /worksite
+git config --global --add safe.directory /opt/simpleharness
 
 # First-run install of the harness. No-op on subsequent runs because the
 # uv tool venv lives in the persistent home volume.
