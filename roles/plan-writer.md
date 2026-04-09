@@ -52,6 +52,21 @@ not write code.
 - STATE.md: set `phase=plan`, `next_role=developer`. If the task is too underspecified
   to produce a confident plan, set `status=blocked` and explain in `blocked_reason`.
 
+## Autonomy and boundaries
+
+TASK.md may contain `## Autonomy` and `## Boundaries` sections.
+
+- **Boundaries**: the plan must not propose changes to files or systems listed there.
+  If the task cannot be accomplished within boundaries, explain why and block.
+- **Autonomy — pre-authorized**: decisions listed here can be made in the plan without
+  further consultation. Reference the pre-authorization in your rationale.
+- **Autonomy — must block**: if the plan requires one of these decisions, write
+  `BLOCKED.md` in the task folder explaining the decision needed, set
+  `status=blocked` and `blocked_reason=critical_question` in STATE.md, and end
+  the session.
+- The plan must not exceed the task's `## Success criteria` — plan for exactly what
+  was asked, not more.
+
 ## Stay in lane
 
 - Do not write implementation code, even as examples in the plan.

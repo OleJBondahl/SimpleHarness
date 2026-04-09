@@ -29,8 +29,14 @@ as you go.
    e. If the step failed or the output is wrong, retry once with a corrected prompt.
       If it fails again, note it as blocked and move on — don't loop indefinitely.
 3. After all steps, run the full verification suite via Haiku. Log the result.
-4. Write `03-develop.md` with the full log.
-5. Commit any uncommitted changes with a message referencing the task and step.
+4. Dispatch the expert-critic subagent via the Agent tool to review the work. Use the
+   `general-purpose` agent type and set the prompt to a self-contained critique request
+   naming a specific `expert_area` (security, performance, UX, etc.). Synthesize the
+   critique findings into your `03-develop.md` log under a 'Critique' section. If the
+   critique flags CRITICAL issues, loop your own fix cycle — do NOT end the session
+   with known criticals.
+5. Write `03-develop.md` with the full log.
+6. Commit any uncommitted changes with a message referencing the task and step.
 
 ## Delegate to subagents
 
@@ -59,10 +65,24 @@ those always go to Haiku.
   - Test result (pass / fail / skipped)
   - Commit hash (or "uncommitted" if batched)
 - Actual code changes committed to the worksite repo.
-- STATE.md: set `phase=develop`, `next_role=expert-critic` when all steps complete.
+- STATE.md: set `phase=develop`, `next_role=project-leader` once all steps land AND
+  the expert-critic subagent returned clean or you addressed its findings.
   If the plan is fundamentally wrong (a step cannot be done as written), set
   `next_role=plan-writer` and explain in `blocked_reason`. Do not set
   `status=blocked` for a single failing step — only for a plan-level breakdown.
+
+## Autonomy and boundaries
+
+TASK.md may contain `## Autonomy` and `## Boundaries` sections.
+
+- **Boundaries**: do not modify files or systems listed there. Brief each Sonnet
+  subagent with the boundaries so they respect them too.
+- **Autonomy — pre-authorized**: decisions listed here can be made during
+  implementation without blocking. Note the pre-authorization in your log.
+- **Autonomy — must block**: if implementation requires one of these decisions, write
+  `BLOCKED.md` in the task folder explaining the decision needed, set
+  `status=blocked` and `blocked_reason=critical_question` in STATE.md, and end
+  the session.
 
 ## Stay in lane
 

@@ -21,10 +21,18 @@ Expected flow (examples, not rules):
   fuzzy requirements, `plan-writer` for a clear brief, or `developer`
   directly for a trivial fix).
 - Subsequent sessions: the dispatched role runs; project-leader reviews,
-  loops back, dispatches an expert-critic, or wraps up.
+  loops back, or wraps up. (Expert review is done inline by the developer via the expert-critic subagent.)
 - Final session: project-leader writes `FINAL.md`, sets `status=done`.
 
 Since `phases` contains only `project-leader`, the harness's default
 phase-advance logic will never naturally pick another role — every
 non-project-leader session happens because project-leader set
 `STATE.next_role` explicitly.
+
+## TASK.md extended fields
+
+Tasks may include `depends_on`, `deliverables`, `refine_on_deps_complete`,
+and `references` in their frontmatter, plus `## Success criteria`,
+`## Boundaries`, `## Autonomy`, and `## Handoff` sections in the body.
+All roles respect these fields — see each role's "Autonomy and boundaries"
+section for details.

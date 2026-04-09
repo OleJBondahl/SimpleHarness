@@ -15,9 +15,16 @@ Aligned with files currently in `roles/`.
 | `roles/brainstormer.md` | `brainstorming`, `jobs-to-be-done`, `problem-framing-canvas` | `opportunity-solution-tree`, `expert-panel` |
 | `roles/plan-writer.md` | `writing-plans` | `brainstorming` (if scope unclear), `using-git-worktrees` |
 | `roles/developer.md` | `test-driven-development`, `executing-plans`, `subagent-driven-development` | `systematic-debugging`, `haiku-delegate`, `dispatching-parallel-agents`, `claude-api` (if SDK work) |
-| `roles/expert-critic.md` | `receiving-code-review`, `expert-panel` | `verification-before-completion`, `systematic-debugging` |
 | `roles/approver.md` | *(no skill — harness approval logic)* | `update-config`, `hookify/writing-rules` (as design reference only) |
 | `roles/project-leader.md` | `roadmap-planning`, `finishing-a-development-branch` | `requesting-code-review`, `updating-memory` |
+
+## A2. Subagent → skill mapping
+
+Aligned with files currently in `subagents/`. These are invoked inline via the Agent tool, not as separate workflow phases.
+
+| Subagent file | Primary skills | Secondary skills |
+|---|---|---|
+| `subagents/expert-critic.md` | `receiving-code-review`, `expert-panel` | `verification-before-completion`, `systematic-debugging` |
 
 ---
 
@@ -95,7 +102,8 @@ Owns direction, positioning, prioritization, and stakeholder framing. Invoked fo
 
 ## Maintenance
 
-When a role or workflow file changes:
-1. Update the mapping table in Section A or B above.
+When a role, subagent, or workflow file changes:
+1. Update the mapping table in Section A, A2, or B above.
 2. If a new skill becomes relevant, add it to the table rather than creating a parallel list.
 3. If a proposed role in Section D gets created as a real file in `roles/`, move it up into Section A and delete the proposal entry.
+4. If a new subagent is added to `subagents/`, add it to Section A2.

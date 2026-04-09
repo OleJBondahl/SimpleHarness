@@ -34,18 +34,29 @@ from rich.text import Text
 from simpleharness.core import (
     _VALID_APPROVER_MODELS,
     _VALID_MODES,
+    _VALID_SKILL_ENFORCEMENT,
     DEFAULT_BASH_ALLOW,
     Config,
     Role,
     SessionResult,
+    SkillsConfig,
     State,
+    Subagent,
     Task,
+    TaskSpec,
     Workflow,
     _format_tool_call,
     _slugify,
     build_claude_cmd,
+    build_exported_subagent_file,
+    build_session_env,
+    build_session_hooks_config,
     build_session_prompt,
+    check_deliverables,
     compute_post_session_state,
+    parse_skill_list,
+    parse_task_spec,
+    plan_downstream_transitions,
     plan_tick,
     resolve_next_role,
     toolbox_root,
@@ -58,7 +69,16 @@ from simpleharness.core import (
     Permissions as Permissions,  # re-export for downstream scripts
 )
 from simpleharness.core import (
+    Skill as Skill,  # re-export
+)
+from simpleharness.core import (
+    SkillList as SkillList,  # re-export (keep for downstream consumers)
+)
+from simpleharness.core import (
     _merge_config as _merge_config,  # re-export
+)
+from simpleharness.core import (
+    merge_skill_lists as merge_skill_lists,  # re-export (keep for downstream consumers)
 )
 from simpleharness.core import (
     parse_frontmatter as parse_frontmatter,  # re-export
@@ -122,6 +142,30 @@ def load_config(worksite: Path) -> Config:
         extra_bash_allow=tuple(perms_raw.get("extra_bash_allow", []) or []),
         extra_tools_allow=tuple(perms_raw.get("extra_tools_allow", []) or []),
     )
+
+    skills_raw = merged.get("skills", {}) or {}
+    skills_list = parse_skill_list(
+        {
+            "available": skills_raw.get("default_available"),
+            "must_use": skills_raw.get("default_must_use"),
+        }
+        if skills_raw
+        else None
+    )
+    enforcement = skills_raw.get("enforcement", "strict")
+    if enforcement is None:
+        enforcement = "strict"
+    if not isinstance(enforcement, str) or enforcement not in _VALID_SKILL_ENFORCEMENT:
+        raise ValueError(
+            f"skills.enforcement: invalid value {enforcement!r}; "
+            f"must be one of {_VALID_SKILL_ENFORCEMENT}"
+        )
+    skills_cfg = SkillsConfig(
+        default_available=skills_list.available,
+        default_must_use=skills_list.must_use,
+        enforcement=enforcement,
+    )
+
     return Config(
         model=str(merged.get("model", "opus")),
         idle_sleep_seconds=int(merged.get("idle_sleep_seconds", 30)),
@@ -131,6 +175,7 @@ def load_config(worksite: Path) -> Config:
         max_turns_default=int(merged.get("max_turns_default", 60)),
         include_partial_messages=bool(merged.get("include_partial_messages", True)),
         permissions=perms,
+        skills=skills_cfg,
     )
 
 
@@ -139,6 +184,7 @@ def load_role(name: str) -> Role:
     if not path.exists():
         raise FileNotFoundError(f"role '{name}' not found at {path}")
     meta, body = read_frontmatter_file(path)
+    skills = parse_skill_list(meta.get("skills"))
     return Role(
         name=str(meta.get("name", name)),
         body=body.strip(),
@@ -148,7 +194,43 @@ def load_role(name: str) -> Role:
         allowed_tools=tuple(meta.get("allowed_tools", []) or []),
         privileged=bool(meta.get("privileged", False)),
         source_path=path,
+        skills=skills,
     )
+
+
+def load_subagent(name: str) -> Subagent:
+    path = toolbox_root() / "subagents" / f"{name}.md"
+    if not path.exists():
+        raise FileNotFoundError(f"subagent '{name}' not found at {path}")
+    meta, body = read_frontmatter_file(path)
+    if meta.get("invocation") == "mcp-permission-handler":
+        raise ValueError(
+            f"subagent '{name}': 'invocation: mcp-permission-handler' is only "
+            "valid for main roles under roles/, not subagents/"
+        )
+    skills = parse_skill_list(meta.get("skills"))
+    return Subagent(
+        name=str(meta.get("name", name)),
+        body=body.strip(),
+        description=str(meta.get("description", "")),
+        model=meta.get("model"),
+        # Intentional backward-compatibility: accept role-style `allowed_tools:`
+        # frontmatter as a fallback when `tools:` is absent, so subagent files
+        # written in the same style as roles still load correctly.
+        tools=tuple(meta.get("tools", meta.get("allowed_tools", [])) or []),
+        source_path=path,
+        skills=skills,
+    )
+
+
+def load_all_subagents() -> tuple[Subagent, ...]:
+    subagents_dir = toolbox_root() / "subagents"
+    if not subagents_dir.exists():
+        return ()
+    out = []
+    for path in sorted(subagents_dir.glob("*.md")):
+        out.append(load_subagent(path.stem))
+    return tuple(out)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -601,8 +683,22 @@ def discover_tasks(worksite: Path) -> list[Task]:
         except (ValueError, yaml.YAMLError) as e:
             warn(f"skipping {child.name}: unreadable STATE.md ({e})")
             continue
+        spec = None
+        if task_md.exists():
+            try:
+                fm, _body = read_frontmatter_file(task_md)
+                spec = parse_task_spec(fm)
+            except (ValueError, yaml.YAMLError) as e:
+                warn(f"{child.name}: unreadable TASK.md frontmatter ({e}), skipping spec")
         out.append(
-            Task(slug=child.name, folder=child, task_md=task_md, state_path=state_path, state=state)
+            Task(
+                slug=child.name,
+                folder=child,
+                task_md=task_md,
+                state_path=state_path,
+                state=state,
+                spec=spec,
+            )
         )
     return out
 
@@ -635,31 +731,51 @@ def list_phase_files(task_folder: Path) -> list[Path]:
     return sorted(out, key=lambda p: p.name)
 
 
-def _write_approver_settings(task_dir: Path) -> Path:
+def _write_approver_settings(task_dir: Path, enforcement_mode: str = "off") -> Path:
     """Write .approver-settings.json registering the PreToolUse hook.
 
     The hook is scoped to the Bash matcher only — other tools flow
-    through the normal --allowedTools check. Lifecycle mirrors
-    .session_prompt.md: overwritten each session, left on disk for
-    post-hoc debugging. Returns the path to the written file.
+    through the normal --allowedTools check. Also merges skill enforcement
+    hooks (SessionStart/Stop/SubagentStop) when enforcement_mode != 'off'.
+    Lifecycle mirrors .session_prompt.md: overwritten each session, left on
+    disk for post-hoc debugging. Returns the path to the written file.
     """
     hook_script = (toolbox_root() / "simpleharness_approver_hook.sh").as_posix()
-    settings = {
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": f"bash {hook_script}",
-                        }
-                    ],
-                }
-            ]
-        }
+    approver_hooks: dict[str, Any] = {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": f"bash {hook_script}",
+                    }
+                ],
+            }
+        ]
     }
+    merged_hooks = build_session_hooks_config(
+        enforcement_mode, sys.executable, existing_hooks=approver_hooks
+    )
+    settings = {"hooks": merged_hooks}
     out_path = task_dir / ".approver-settings.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    return out_path
+
+
+def _write_session_settings(task_dir: Path, enforcement_mode: str) -> Path | None:
+    """Write .session-settings.json with skill hooks for non-approver modes.
+
+    Returns the path to the written file, or None if enforcement is 'off'
+    (nothing to register).
+    """
+    if enforcement_mode == "off":
+        return None
+    hooks = build_session_hooks_config(enforcement_mode, sys.executable)
+    settings = {"hooks": hooks}
+    out_path = task_dir / ".session-settings.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
@@ -939,14 +1055,32 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     jsonl_log = log_root / f"{stem}.jsonl"
     plain_log = log_root / f"{stem}.log"
 
-    # 4. build command — pre-write approver files in shell before calling core
+    # 4. export subagents to <worksite>/.claude/agents/
+    subagents = load_all_subagents()
+    if subagents:
+        agents_dir = Path(task.state.worksite) / ".claude" / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+        defaults = SkillList(
+            available=config.skills.default_available,
+            must_use=config.skills.default_must_use,
+        )
+        for sa in subagents:
+            merged_sa = merge_skill_lists(sa.skills, defaults)
+            exported_sa = replace(sa, skills=merged_sa)
+            content = build_exported_subagent_file(exported_sa)
+            (agents_dir / f"{sa.name}.md").write_text(content, encoding="utf-8")
+
+    # 5. build command — pre-write approver/session settings files before calling core
     session_id = str(uuid.uuid4())
+    enforcement_mode = config.skills.enforcement
     if config.permissions.mode == "approver":
         bash_patterns = list(DEFAULT_BASH_ALLOW) + list(config.permissions.extra_bash_allow)
         write_approver_allowlist(task.folder, bash_patterns)
-        approver_settings_path = _write_approver_settings(task.folder)
+        approver_settings_path: Path | None = _write_approver_settings(
+            task.folder, enforcement_mode
+        )
     else:
-        approver_settings_path = None
+        approver_settings_path = _write_session_settings(task.folder, enforcement_mode)
     cmd = build_claude_cmd(
         prompt_file,
         role,
@@ -956,7 +1090,7 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
         approver_settings_path=approver_settings_path,
     )
 
-    # 5. banner
+    # 6. banner
     console.rule(f"[cyan]session {idx + 1}  [bold]{role.name}[/]  task={task.slug}")
     say(
         f"model={config.model}  session_id={session_id[:8]}  max_turns={role.max_turns or config.max_turns_default}"
@@ -964,20 +1098,18 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     if correction:
         say("CORRECTION.md was consumed and injected into this session's prompt.", style="yellow")
 
-    # 6. env exports (approver mode only — mirror the vars Claude Code will
-    # pass to the MCP server, so anything running in-process downstream sees
-    # the same values)
-    extra_env: dict[str, str] | None = None
+    # 7. env exports — skill vars always; approver-only vars only in approver mode
+    approver_base: dict[str, str] = {}
     if config.permissions.mode == "approver":
-        extra_env = {
+        approver_base = {
             "SIMPLEHARNESS_STREAM_LOG": str(jsonl_log),
             "SIMPLEHARNESS_WORKSITE": str(Path(task.state.worksite)),
             "SIMPLEHARNESS_APPROVER_MODEL": config.permissions.approver_model,
-            "SIMPLEHARNESS_ROLE": role.name,
             "SIMPLEHARNESS_TASK_SLUG": task.slug,
         }
+    extra_env: dict[str, str] = build_session_env(approver_base, role, subagents, config)
 
-    # 7. spawn + stream
+    # 8. spawn + stream
     proc = spawn_claude(cmd, Path(task.state.worksite), extra_env=extra_env)
     interrupted = False
     result_session_id: str | None = None
@@ -1035,6 +1167,65 @@ def _task_by_slug(tasks: tuple[Task, ...], slug: str | None) -> Task:
     raise ValueError(f"task slug {slug!r} not found in task list")
 
 
+def _handle_downstream_transitions(
+    done_task: Task,
+    all_tasks: tuple[Task, ...],
+    worksite: Path,
+) -> None:
+    """After a task completes, update downstream tasks based on their refine_on_deps_complete."""
+    all_specs: dict[str, TaskSpec] = {}
+    for t in all_tasks:
+        if t.spec is not None:
+            all_specs[t.slug] = t.spec
+
+    actions = plan_downstream_transitions(done_task.slug, all_specs)
+    for action in actions:
+        downstream = next((t for t in all_tasks if t.slug == action.task_slug), None)
+        if downstream is None:
+            continue
+        if action.action == "block_for_rebrief":
+            new_state = replace(
+                downstream.state,
+                status="blocked",
+                blocked_reason="awaiting_brief_refinement",
+            )
+            write_state(downstream.state_path, new_state)
+            # Write NEEDS_REBRIEF.md
+            deliverable_lines = "\n".join(
+                f"- `{d.path}`: {d.description}" for d in action.upstream_deliverables
+            )
+            rebrief_text = (
+                f"# Rebrief needed\n\n"
+                f"Upstream task **{done_task.slug}** has completed.\n\n"
+                f"## Upstream deliverables\n\n"
+                f"{deliverable_lines or '(none declared)'}\n\n"
+                f"## Action required\n\n"
+                f"Review the upstream outputs and refine this task's TASK.md "
+                f"(success criteria, references, etc.), then run "
+                f"`simpleharness unblock {action.task_slug}`.\n"
+            )
+            (downstream.folder / "NEEDS_REBRIEF.md").write_text(rebrief_text, encoding="utf-8")
+            say(f"task {action.task_slug}: blocked for rebrief (upstream {done_task.slug} done)")
+        else:
+            # leave_active — project-leader will handle refinement on next kick-off
+            say(f"task {action.task_slug}: upstream {done_task.slug} done, auto-refine on next run")
+
+
+def _update_blocked_tasks_index(worksite: Path) -> None:
+    """Maintain simpleharness/BLOCKED_TASKS.md — written when tasks are blocked, deleted otherwise."""
+    blocked = [t for t in discover_tasks(worksite) if t.state.status == "blocked"]
+    index_path = worksite_sh_dir(worksite) / "BLOCKED_TASKS.md"
+    if not blocked:
+        if index_path.exists():
+            index_path.unlink()
+        return
+    rows = "\n".join(f"| {t.slug} | {t.state.blocked_reason or ''} |" for t in blocked)
+    index_path.write_text(
+        f"# Blocked tasks\n\n| Task | Reason |\n|------|--------|\n{rows}\n",
+        encoding="utf-8",
+    )
+
+
 def tick_once(worksite: Path, config: Config) -> bool:
     """One iteration of the loop. Returns True if we ran a session, False if idle."""
     tasks = tuple(discover_tasks(worksite))
@@ -1051,11 +1242,19 @@ def tick_once(worksite: Path, config: Config) -> bool:
         case "no_active":
             say("no active tasks", style="dim")
             return False
+        case "waiting_on_deps":
+            waiting = [
+                t for t in tasks if t.state.status == "active" and t.spec and t.spec.depends_on
+            ]
+            slugs = ", ".join(t.slug for t in waiting[:3])
+            say(f"waiting on dependencies: {slugs}", style="dim")
+            return False
         case "block":
             task = _task_by_slug(tasks, plan.block_task_slug)
             err(f"task {task.slug}: {plan.block_reason}")
             new_state = replace(task.state, status="blocked", blocked_reason=plan.block_reason)
             write_state(task.state_path, new_state)
+            _update_blocked_tasks_index(worksite)
             return False
         case "run":
             task = _task_by_slug(tasks, plan.run_task_slug)
@@ -1142,11 +1341,34 @@ def tick_once(worksite: Path, config: Config) -> bool:
             ):
                 warn(f"task {task.slug}: no progress for {new_state.no_progress_ticks} ticks")
 
+            # Deliverable verification before allowing done
+            if new_state.status == "done" and task.spec and task.spec.deliverables:
+                existing = frozenset(
+                    d.path for d in task.spec.deliverables if (worksite / d.path).exists()
+                )
+                missing = check_deliverables(task.spec, existing)
+                if missing:
+                    missing_list = ", ".join(missing)
+                    warn(f"task {task.slug}: missing deliverables: {missing_list}")
+                    # Retry: dispatch project-leader to investigate
+                    new_state = replace(
+                        new_state,
+                        status="active",
+                        next_role="project-leader",
+                        blocked_reason=f"missing deliverables (retry): {missing_list}",
+                    )
+
             write_state(task.state_path, new_state)
             say(
                 f"task {task.slug}: session complete  "
                 f"(status={new_state.status}, next_role={new_state.next_role or 'auto'})"
             )
+
+            # Downstream transitions when task completes
+            if new_state.status == "done":
+                _handle_downstream_transitions(task, tasks, worksite)
+
+            _update_blocked_tasks_index(worksite)
             return True
         case _:
             return False
@@ -1202,12 +1424,28 @@ def cmd_new(args: argparse.Namespace) -> int:
         "title": args.title,
         "workflow": args.workflow,
         "worksite": ".",
+        "depends_on": [],
+        "deliverables": [],
+        "refine_on_deps_complete": False,
+        "references": [],
     }
     task_body = (
         "# Goal\n\n"
-        "<describe what you want done. be specific about constraints.>\n\n"
-        "## Constraints\n\n"
-        "- <any boundaries>\n"
+        "<describe the desired outcome in one paragraph>\n\n"
+        "## Success criteria\n\n"
+        "- [ ] <objectively testable criterion>\n"
+        "- [ ] <objectively testable criterion>\n\n"
+        "## Boundaries\n\n"
+        "- <what this task must NOT touch>\n\n"
+        "## Autonomy\n\n"
+        "**Pre-authorized (decide and proceed):**\n"
+        "- <decisions the agent can make without asking>\n\n"
+        "**Must block (stop and write BLOCKED.md):**\n"
+        "- <decisions that require user input>\n\n"
+        "## Handoff\n\n"
+        "<only needed if this task has dependents — describe what downstream consumes>\n\n"
+        "## Notes\n\n"
+        "<optional context>\n"
     )
     yaml_fm = yaml.safe_dump(task_frontmatter, sort_keys=False, allow_unicode=True)
     (folder / "TASK.md").write_text(f"---\n{yaml_fm}---\n\n{task_body}", encoding="utf-8")
@@ -1270,7 +1508,17 @@ def cmd_status(args: argparse.Namespace) -> int:
             f"last={t.state.last_role or '-'}  next={t.state.next_role or '-'}  "
             f"sessions={t.state.total_sessions}/{t.state.session_cap}"
         )
+        if t.state.status == "blocked":
+            line += f"  reason={t.state.blocked_reason}"
         console.print(line)
+    blocked = [t for t in tasks if t.state.status == "blocked"]
+    if blocked:
+        reasons: dict[str, int] = {}
+        for t in blocked:
+            r = t.state.blocked_reason or "unknown"
+            reasons[r] = reasons.get(r, 0) + 1
+        parts = [f"{v} {k}" for k, v in reasons.items()]
+        say(f"\n{len(blocked)} blocked: {', '.join(parts)}")
     return 0
 
 

@@ -24,6 +24,7 @@ import yaml
 
 _VALID_MODES = ("safe", "approver", "dangerous")
 _VALID_APPROVER_MODELS = ("haiku", "sonnet", "opus")
+_VALID_SKILL_ENFORCEMENT = ("strict", "warn", "off")
 
 
 # Default Bash command glob patterns that are allowed in safe mode. Each entry
@@ -69,6 +70,39 @@ class Permissions:
 
 
 @dataclass(frozen=True)
+class Skill:
+    name: str
+    hint: str = ""
+
+
+@dataclass(frozen=True)
+class SkillList:
+    available: tuple[Skill, ...] = field(default_factory=tuple)
+    must_use: tuple[str, ...] = field(default_factory=tuple)
+    exclude_default_must_use: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class SkillsConfig:
+    """Global skills defaults + enforcement knob.
+
+    ``default_available`` and ``default_must_use`` are merged into every
+    loaded role's own ``SkillList`` via ``merge_skill_lists``. A role can
+    opt out of a specific default with ``skills.exclude_default_must_use``
+    in its frontmatter.
+
+    ``enforcement`` controls the Stop/SubagentStop hook behavior:
+      - ``strict``  — missing must_use skills block the session from stopping
+      - ``warn``    — missing skills are reported to stderr but don't block
+      - ``off``     — the hook is not registered at all
+    """
+
+    default_available: tuple[Skill, ...] = field(default_factory=tuple)
+    default_must_use: tuple[str, ...] = field(default_factory=tuple)
+    enforcement: str = "strict"  # strict | warn | off
+
+
+@dataclass(frozen=True)
 class Config:
     model: str = "opus"
     idle_sleep_seconds: int = 30
@@ -78,6 +112,7 @@ class Config:
     max_turns_default: int = 60
     include_partial_messages: bool = True
     permissions: Permissions = field(default_factory=Permissions)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
 
 
 @dataclass(frozen=True)
@@ -90,6 +125,18 @@ class Role:
     allowed_tools: tuple[str, ...] = field(default_factory=tuple)
     privileged: bool = False
     source_path: Path | None = None
+    skills: SkillList = field(default_factory=SkillList)
+
+
+@dataclass(frozen=True)
+class Subagent:
+    name: str
+    body: str
+    description: str = ""
+    model: str | None = None
+    tools: tuple[str, ...] = field(default_factory=tuple)
+    source_path: Path | None = None
+    skills: SkillList = field(default_factory=SkillList)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -143,6 +190,95 @@ def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, A
     return out
 
 
+@deal.has()
+def parse_skill_list(raw: Any) -> SkillList:
+    """Parse the `skills:` block from frontmatter into a SkillList.
+
+    Accepts the raw dict (or None) read from YAML.
+    Missing sub-fields become empty (zero-value defaults).
+    Malformed sub-fields (wrong type, missing required keys) raise ``ValueError``
+    with a message identifying the offending field.
+    """
+    if raw is None:
+        return SkillList()
+    if not isinstance(raw, dict):
+        raise ValueError("skills: must be a mapping")
+
+    available_raw = raw.get("available")
+    if available_raw is None:
+        available: tuple[Skill, ...] = ()
+    elif not isinstance(available_raw, list):
+        raise ValueError("skills.available: must be a list")
+    else:
+        skills: list[Skill] = []
+        for entry in available_raw:
+            if isinstance(entry, str):
+                skills.append(Skill(name=entry))
+            elif isinstance(entry, dict):
+                if "name" not in entry:
+                    raise ValueError("skills.available: each entry must have a 'name' key")
+                skills.append(Skill(name=str(entry["name"]), hint=str(entry.get("hint", ""))))
+            else:
+                raise ValueError("skills.available: each entry must be a string or mapping")
+        available = tuple(skills)
+
+    must_use_raw = raw.get("must_use")
+    if must_use_raw is None:
+        must_use: tuple[str, ...] = ()
+    elif not isinstance(must_use_raw, list):
+        raise ValueError("skills.must_use: must be a list")
+    else:
+        must_use = tuple(str(s) for s in must_use_raw)
+
+    exclude_raw = raw.get("exclude_default_must_use")
+    if exclude_raw is None:
+        exclude_default_must_use: tuple[str, ...] = ()
+    elif not isinstance(exclude_raw, list):
+        raise ValueError("skills.exclude_default_must_use: must be a list")
+    else:
+        exclude_default_must_use = tuple(str(s) for s in exclude_raw)
+
+    return SkillList(
+        available=available,
+        must_use=must_use,
+        exclude_default_must_use=exclude_default_must_use,
+    )
+
+
+@deal.pure
+def merge_skill_lists(role_skills: SkillList, default_skills: SkillList) -> SkillList:
+    """Merge default skills into a role's skills list.
+
+    - `available`: union (defaults first, then role-specific; de-dup by name, role hints win).
+    - `must_use`: union (defaults + role) minus anything in role.exclude_default_must_use.
+      Preserves order: defaults first, then role additions, de-duplicated.
+    - `exclude_default_must_use`: carried from role_skills unchanged.
+    """
+    # Merge available: defaults first, role wins on collision
+    seen_names: dict[str, Skill] = {}
+    for skill in default_skills.available:
+        seen_names[skill.name] = skill
+    for skill in role_skills.available:
+        seen_names[skill.name] = skill  # role hint wins
+    merged_available = tuple(seen_names.values())
+
+    # Merge must_use: defaults + role, minus exclude_default_must_use
+    excluded = set(role_skills.exclude_default_must_use)
+    merged_must_use_names: dict[str, None] = {}
+    for name in default_skills.must_use:
+        if name not in excluded:
+            merged_must_use_names[name] = None
+    for name in role_skills.must_use:
+        merged_must_use_names[name] = None
+    merged_must_use = tuple(merged_must_use_names)
+
+    return SkillList(
+        available=merged_available,
+        must_use=merged_must_use,
+        exclude_default_must_use=role_skills.exclude_default_must_use,
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Dataclasses: Workflow, State, Task, SessionResult
 # (moved from shell.py — Phase 2b)
@@ -192,6 +328,7 @@ class Task:
     task_md: Path
     state_path: Path
     state: State
+    spec: TaskSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +338,34 @@ class SessionResult:
     session_id: str | None
     result_text: str | None
     exit_code: int | None
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Task specification (parsed from TASK.md frontmatter)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Deliverable:
+    path: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class TaskSpec:
+    title: str
+    workflow: str
+    depends_on: tuple[str, ...] = field(default_factory=tuple)
+    deliverables: tuple[Deliverable, ...] = field(default_factory=tuple)
+    refine_on_deps_complete: bool = False
+    references: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class DownstreamAction:
+    task_slug: str
+    action: Literal["leave_active", "block_for_rebrief"]
+    upstream_deliverables: tuple[Deliverable, ...]
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -226,13 +391,93 @@ def worksite_sh_dir(worksite: Path) -> Path:
 
 
 @deal.pure
+def parse_task_spec(frontmatter: dict[str, Any]) -> TaskSpec:
+    """Convert raw TASK.md frontmatter dict to a typed TaskSpec.
+
+    Missing fields get safe defaults so old-style tasks continue to work.
+    """
+    raw_deps = frontmatter.get("depends_on") or []
+    raw_deliverables = frontmatter.get("deliverables") or []
+    raw_refs = frontmatter.get("references") or []
+
+    deliverables = tuple(
+        Deliverable(
+            path=str(d["path"]),
+            description=str(d.get("description", "")),
+        )
+        if isinstance(d, dict)
+        else Deliverable(path=str(d))
+        for d in raw_deliverables
+    )
+
+    return TaskSpec(
+        title=str(frontmatter.get("title", "")),
+        workflow=str(frontmatter.get("workflow", "")),
+        depends_on=tuple(str(s) for s in raw_deps),
+        deliverables=deliverables,
+        refine_on_deps_complete=bool(frontmatter.get("refine_on_deps_complete", False)),
+        references=tuple(str(r) for r in raw_refs),
+    )
+
+
+@deal.pure
+def deps_satisfied(task_spec: TaskSpec, all_states: Mapping[str, str]) -> bool:
+    """True if every slug in ``depends_on`` maps to ``"done"`` in all_states."""
+    return all(all_states.get(slug) == "done" for slug in task_spec.depends_on)
+
+
+@deal.pure
+def plan_downstream_transitions(
+    done_slug: str,
+    all_specs: Mapping[str, TaskSpec],
+) -> tuple[DownstreamAction, ...]:
+    """Compute what to do for each downstream task when *done_slug* completes.
+
+    Returns one ``DownstreamAction`` per task whose ``depends_on`` contains
+    *done_slug*. The action is determined by the downstream task's
+    ``refine_on_deps_complete`` flag.
+    """
+    upstream_spec = all_specs.get(done_slug)
+    upstream_deliverables = upstream_spec.deliverables if upstream_spec else ()
+
+    actions: list[DownstreamAction] = []
+    for slug, spec in all_specs.items():
+        if done_slug in spec.depends_on:
+            action: Literal["leave_active", "block_for_rebrief"] = (
+                "leave_active" if spec.refine_on_deps_complete else "block_for_rebrief"
+            )
+            actions.append(
+                DownstreamAction(
+                    task_slug=slug,
+                    action=action,
+                    upstream_deliverables=upstream_deliverables,
+                )
+            )
+    return tuple(actions)
+
+
+@deal.pure
+def check_deliverables(spec: TaskSpec, existing_paths: frozenset[str]) -> tuple[str, ...]:
+    """Return paths of deliverables that are missing from *existing_paths*."""
+    return tuple(d.path for d in spec.deliverables if d.path not in existing_paths)
+
+
+@deal.pure
 def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task | None:
-    """Priority: CORRECTION.md exists > active non-blocked > lowest slug.
+    """Priority: CORRECTION.md exists > active + deps met > lowest slug.
 
     ``corrections`` is the pre-computed set of task slugs that have a
     CORRECTION.md on disk — the shell caller performs that I/O.
+
+    A task is only a candidate if it is ``active`` AND its ``depends_on``
+    slugs are all ``done`` (or it has no spec / no deps).
     """
-    candidates = [t for t in tasks if t.state.status == "active"]
+    all_states: dict[str, str] = {t.slug: t.state.status for t in tasks}
+    candidates = [
+        t
+        for t in tasks
+        if t.state.status == "active" and (t.spec is None or deps_satisfied(t.spec, all_states))
+    ]
     if not candidates:
         return None
     # tasks with CORRECTION.md take priority
@@ -410,11 +655,12 @@ def build_claude_cmd(
     elif mode == "approver":
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
-        if approver_settings_path is not None:
-            cmd += ["--settings", str(approver_settings_path)]
     else:
         cmd += ["--permission-mode", "acceptEdits"]
         cmd += ["--allowedTools", _build_allowlist(role, config)]
+
+    if approver_settings_path is not None:
+        cmd += ["--settings", str(approver_settings_path)]
 
     return cmd
 
@@ -445,6 +691,154 @@ def _format_tool_call(tname: str, tinput: dict[str, Any]) -> str:
 
 
 @deal.pure
+def build_subagent_export_body(subagent: Subagent) -> str:
+    """Render the body written to <worksite>/.claude/agents/<name>.md.
+
+    Prepends a '## Skill Requirements' section derived from subagent.skills to
+    the original body so the subagent sees its required/available skills
+    without needing a SessionStart hook (SessionStart doesn't fire for subagents).
+
+    If skills.available and skills.must_use are both empty, return the original
+    body unchanged.
+    """
+    if not subagent.skills.available and not subagent.skills.must_use:
+        return subagent.body
+
+    lines: list[str] = ["## Skill Requirements", ""]
+    if subagent.skills.must_use:
+        lines.append("You MUST invoke these skills before finishing:")
+        for name in subagent.skills.must_use:
+            lines.append(f"- {name}")
+        lines.append("")
+    if subagent.skills.available:
+        lines.append("Available skills (invoke via the Skill tool):")
+        for skill in subagent.skills.available:
+            entry = f"- {skill.name}"
+            if skill.hint:
+                entry += f": {skill.hint}"
+            lines.append(entry)
+        lines.append("")
+    lines.append("")
+    return "\n".join(lines) + subagent.body
+
+
+@deal.pure
+def build_subagent_export_frontmatter(subagent: Subagent) -> dict[str, Any]:
+    """Return only the fields Claude Code's .claude/agents/ format understands.
+
+    Specifically: name, description, tools (joined comma-string), model (if set).
+    Strips SimpleHarness-only fields (privileged, invocation, skills, source_path).
+    """
+    fm: dict[str, Any] = {"name": subagent.name}
+    if subagent.description:
+        fm["description"] = subagent.description
+    if subagent.tools:
+        fm["tools"] = ", ".join(subagent.tools)
+    if subagent.model:
+        fm["model"] = subagent.model
+    return fm
+
+
+@deal.pure
+def build_exported_subagent_file(subagent: Subagent) -> str:
+    """Full file contents for <worksite>/.claude/agents/<name>.md.
+
+    Renders Claude-Code-compatible frontmatter + body (with baked skill reminder).
+    """
+    fm = build_subagent_export_frontmatter(subagent)
+    fm_lines: list[str] = []
+    for k, v in fm.items():
+        fm_lines.append(f"{k}: {v}")
+    frontmatter_block = "---\n" + "\n".join(fm_lines) + "\n---\n"
+    body = build_subagent_export_body(subagent)
+    return frontmatter_block + body
+
+
+@deal.pure
+def build_session_hooks_config(
+    enforcement_mode: str,
+    python_executable: str,
+    existing_hooks: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the merged 'hooks' block to write into settings JSON.
+
+    - If enforcement_mode == 'off': no skill hooks are added. Return existing_hooks
+      unchanged (or empty dict if None).
+    - Otherwise: merge SessionStart, Stop, and SubagentStop entries for the
+      simpleharness hook scripts into existing_hooks. Preserves any entries
+      already present (e.g. the approver's PreToolUse Bash hook).
+    """
+    base: dict[str, Any] = dict(existing_hooks) if existing_hooks else {}
+    if enforcement_mode == "off":
+        return base
+
+    def _hook(module: str) -> dict[str, Any]:
+        return {"type": "command", "command": f"{python_executable} -m {module}"}
+
+    for event, module in (
+        ("SessionStart", "simpleharness.hooks.inform_skills"),
+        ("Stop", "simpleharness.hooks.enforce_must_use"),
+        ("SubagentStop", "simpleharness.hooks.enforce_must_use"),
+    ):
+        entry = [_hook(module)]
+        if event in base:
+            base[event] = list(base[event]) + entry
+        else:
+            base[event] = entry
+    return base
+
+
+@deal.pure
+def build_session_env(
+    base_env: dict[str, str],
+    role: Role,
+    subagents: tuple[Subagent, ...],
+    config: Config,
+) -> dict[str, str]:
+    """Return a new env dict with SimpleHarness vars added for the child session.
+
+    Starts from base_env, adds:
+        SIMPLEHARNESS_ROLE              = role.name
+        SIMPLEHARNESS_AVAILABLE_SKILLS  = JSON of merged skills.available
+                                          ({name, hint} dicts)
+        SIMPLEHARNESS_MUST_USE_MAIN     = JSON list of merged skills.must_use names
+        SIMPLEHARNESS_MUST_USE_SUB      = JSON object mapping subagent name →
+                                          merged must_use list
+        SIMPLEHARNESS_ENFORCEMENT       = config.skills.enforcement
+
+    'Merged' means: merge_skill_lists(role.skills, SkillList(
+        available=config.skills.default_available,
+        must_use=config.skills.default_must_use,
+    )).
+
+    Does not mutate base_env; returns a new dict.
+    """
+    defaults = SkillList(
+        available=config.skills.default_available,
+        must_use=config.skills.default_must_use,
+    )
+    merged_role = merge_skill_lists(role.skills, defaults)
+
+    available_json = json.dumps([{"name": s.name, "hint": s.hint} for s in merged_role.available])
+    must_use_main_json = json.dumps(list(merged_role.must_use))
+
+    must_use_sub: dict[str, list[str]] = {}
+    for sa in subagents:
+        merged_sa = merge_skill_lists(sa.skills, defaults)
+        must_use_sub[sa.name] = list(merged_sa.must_use)
+    must_use_sub_json = json.dumps(must_use_sub)
+
+    return {
+        **base_env,
+        "SIMPLEHARNESS_ROLE": role.name,
+        "SIMPLEHARNESS_AVAILABLE_SKILLS": available_json,
+        "SIMPLEHARNESS_MUST_USE_MAIN": must_use_main_json,
+        "SIMPLEHARNESS_MUST_USE_SUB": must_use_sub_json,
+        "SIMPLEHARNESS_ENFORCEMENT": config.skills.enforcement,
+    }
+
+
+@deal.pure
 def _slugify(text: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9\s-]", "", text).strip().lower()
     s = re.sub(r"[\s_-]+", "-", s)
@@ -458,7 +852,7 @@ def _slugify(text: str) -> str:
 
 @dataclass(frozen=True)
 class TickPlan:
-    kind: Literal["no_tasks", "no_active", "block", "run"]
+    kind: Literal["no_tasks", "no_active", "waiting_on_deps", "block", "run"]
     block_task_slug: str | None = None
     block_reason: str | None = None
     run_task_slug: str | None = None
@@ -486,6 +880,15 @@ def plan_tick(
 
     task = pick_next_task(tasks, corrections)
     if task is None:
+        # Distinguish: truly no active tasks vs active but deps unmet
+        has_active_with_unmet_deps = any(
+            t.state.status == "active"
+            and t.spec is not None
+            and not deps_satisfied(t.spec, {tt.slug: tt.state.status for tt in tasks})
+            for t in tasks
+        )
+        if has_active_with_unmet_deps:
+            return TickPlan(kind="waiting_on_deps")
         return TickPlan(kind="no_active")
 
     # session cap check before spending
