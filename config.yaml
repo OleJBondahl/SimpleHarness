@@ -64,3 +64,23 @@ permissions:
   # Extra tool names merged with harness.py DEFAULT_TOOLS_ALLOW.
   # e.g. ["WebFetch", "WebSearch"]
   extra_tools_allow: []
+
+# ---- Skills enforcement ----
+# Every loaded role gets these as defaults, merged into its own skills
+# frontmatter via merge_skill_lists. Roles can opt out of a specific
+# default with `skills.exclude_default_must_use` in their frontmatter.
+skills:
+  # Informational — skills always listed as "available" in the session
+  # reminder. Entries can be bare strings or {name, hint} mappings.
+  default_available: []
+
+  # Skills every role must invoke before finishing (unless it opts out
+  # per-role). Enforced by the Stop/SubagentStop hook.
+  default_must_use:
+    - updating-memory
+
+  # enforcement: strict | warn | off
+  #   strict — Stop hook exits 2 and blocks session termination on missing skills
+  #   warn   — Stop hook prints a warning to stderr but allows termination
+  #   off    — Stop hook is not registered
+  enforcement: strict

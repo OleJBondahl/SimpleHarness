@@ -24,6 +24,7 @@ import yaml
 
 _VALID_MODES = ("safe", "approver", "dangerous")
 _VALID_APPROVER_MODELS = ("haiku", "sonnet", "opus")
+_VALID_SKILL_ENFORCEMENT = ("strict", "warn", "off")
 
 
 # Default Bash command glob patterns that are allowed in safe mode. Each entry
@@ -69,18 +70,6 @@ class Permissions:
 
 
 @dataclass(frozen=True)
-class Config:
-    model: str = "opus"
-    idle_sleep_seconds: int = 30
-    max_sessions_per_task: int = 20
-    max_same_role_repeats: int = 3
-    no_progress_tick_threshold: int = 5
-    max_turns_default: int = 60
-    include_partial_messages: bool = True
-    permissions: Permissions = field(default_factory=Permissions)
-
-
-@dataclass(frozen=True)
 class Skill:
     name: str
     hint: str = ""
@@ -91,6 +80,39 @@ class SkillList:
     available: tuple[Skill, ...] = field(default_factory=tuple)
     must_use: tuple[str, ...] = field(default_factory=tuple)
     exclude_default_must_use: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class SkillsConfig:
+    """Global skills defaults + enforcement knob.
+
+    ``default_available`` and ``default_must_use`` are merged into every
+    loaded role's own ``SkillList`` via ``merge_skill_lists``. A role can
+    opt out of a specific default with ``skills.exclude_default_must_use``
+    in its frontmatter.
+
+    ``enforcement`` controls the Stop/SubagentStop hook behavior:
+      - ``strict``  — missing must_use skills block the session from stopping
+      - ``warn``    — missing skills are reported to stderr but don't block
+      - ``off``     — the hook is not registered at all
+    """
+
+    default_available: tuple[Skill, ...] = field(default_factory=tuple)
+    default_must_use: tuple[str, ...] = field(default_factory=tuple)
+    enforcement: str = "strict"  # strict | warn | off
+
+
+@dataclass(frozen=True)
+class Config:
+    model: str = "opus"
+    idle_sleep_seconds: int = 30
+    max_sessions_per_task: int = 20
+    max_same_role_repeats: int = 3
+    no_progress_tick_threshold: int = 5
+    max_turns_default: int = 60
+    include_partial_messages: bool = True
+    permissions: Permissions = field(default_factory=Permissions)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
 
 
 @dataclass(frozen=True)

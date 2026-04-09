@@ -34,10 +34,12 @@ from rich.text import Text
 from simpleharness.core import (
     _VALID_APPROVER_MODELS,
     _VALID_MODES,
+    _VALID_SKILL_ENFORCEMENT,
     DEFAULT_BASH_ALLOW,
     Config,
     Role,
     SessionResult,
+    SkillsConfig,
     State,
     Subagent,
     Task,
@@ -133,6 +135,30 @@ def load_config(worksite: Path) -> Config:
         extra_bash_allow=tuple(perms_raw.get("extra_bash_allow", []) or []),
         extra_tools_allow=tuple(perms_raw.get("extra_tools_allow", []) or []),
     )
+
+    skills_raw = merged.get("skills", {}) or {}
+    skills_list = parse_skill_list(
+        {
+            "available": skills_raw.get("default_available"),
+            "must_use": skills_raw.get("default_must_use"),
+        }
+        if skills_raw
+        else None
+    )
+    enforcement = skills_raw.get("enforcement", "strict")
+    if enforcement is None:
+        enforcement = "strict"
+    if not isinstance(enforcement, str) or enforcement not in _VALID_SKILL_ENFORCEMENT:
+        raise ValueError(
+            f"skills.enforcement: invalid value {enforcement!r}; "
+            f"must be one of {_VALID_SKILL_ENFORCEMENT}"
+        )
+    skills_cfg = SkillsConfig(
+        default_available=skills_list.available,
+        default_must_use=skills_list.must_use,
+        enforcement=enforcement,
+    )
+
     return Config(
         model=str(merged.get("model", "opus")),
         idle_sleep_seconds=int(merged.get("idle_sleep_seconds", 30)),
@@ -142,6 +168,7 @@ def load_config(worksite: Path) -> Config:
         max_turns_default=int(merged.get("max_turns_default", 60)),
         include_partial_messages=bool(merged.get("include_partial_messages", True)),
         permissions=perms,
+        skills=skills_cfg,
     )
 
 
