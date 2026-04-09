@@ -457,6 +457,45 @@ def plan_downstream_transitions(
 
 
 @deal.pure
+def build_refinement_text(
+    done_slug: str,
+    upstream_deliverables: tuple[Deliverable, ...],
+) -> str:
+    """Build the NEEDS_REFINEMENT.md content for a downstream task."""
+    deliverable_lines = "\n".join(f"- `{d.path}`: {d.description}" for d in upstream_deliverables)
+    return (
+        f"# Refinement available\n\n"
+        f"Upstream task **{done_slug}** has completed.\n\n"
+        f"## Upstream deliverables\n\n"
+        f"{deliverable_lines or '(none declared)'}\n\n"
+        f"## Action suggested\n\n"
+        f"Review the upstream outputs and incorporate any relevant findings\n"
+        f"into this task's approach. This file will be consumed automatically\n"
+        f"on the next session kickoff.\n"
+    )
+
+
+@deal.pure
+def build_rebrief_text(
+    done_slug: str,
+    task_slug: str,
+    upstream_deliverables: tuple[Deliverable, ...],
+) -> str:
+    """Build the NEEDS_REBRIEF.md content for a downstream task."""
+    deliverable_lines = "\n".join(f"- `{d.path}`: {d.description}" for d in upstream_deliverables)
+    return (
+        f"# Rebrief needed\n\n"
+        f"Upstream task **{done_slug}** has completed.\n\n"
+        f"## Upstream deliverables\n\n"
+        f"{deliverable_lines or '(none declared)'}\n\n"
+        f"## Action required\n\n"
+        f"Review the upstream outputs and refine this task's TASK.md "
+        f"(success criteria, references, etc.), then run "
+        f"`simpleharness unblock {task_slug}`.\n"
+    )
+
+
+@deal.pure
 def check_deliverables(spec: TaskSpec, existing_paths: frozenset[str]) -> tuple[str, ...]:
     """Return paths of deliverables that are missing from *existing_paths*."""
     return tuple(d.path for d in spec.deliverables if d.path not in existing_paths)

@@ -29,6 +29,8 @@ from simpleharness.core import (
     TaskSpec,
     Workflow,
     _slugify,
+    build_rebrief_text,
+    build_refinement_text,
     check_deliverables,
     compute_post_session_state,
     parse_task_spec,
@@ -165,24 +167,17 @@ def _handle_downstream_transitions(
                 blocked_reason="awaiting_brief_refinement",
             )
             write_state(downstream.state_path, new_state)
-            # Write NEEDS_REBRIEF.md
-            deliverable_lines = "\n".join(
-                f"- `{d.path}`: {d.description}" for d in action.upstream_deliverables
-            )
-            rebrief_text = (
-                f"# Rebrief needed\n\n"
-                f"Upstream task **{done_task.slug}** has completed.\n\n"
-                f"## Upstream deliverables\n\n"
-                f"{deliverable_lines or '(none declared)'}\n\n"
-                f"## Action required\n\n"
-                f"Review the upstream outputs and refine this task's TASK.md "
-                f"(success criteria, references, etc.), then run "
-                f"`simpleharness unblock {action.task_slug}`.\n"
+            rebrief_text = build_rebrief_text(
+                done_task.slug, action.task_slug, action.upstream_deliverables
             )
             (downstream.folder / "NEEDS_REBRIEF.md").write_text(rebrief_text, encoding="utf-8")
             say(f"task {action.task_slug}: blocked for rebrief (upstream {done_task.slug} done)")
         else:
-            # leave_active — project-leader will handle refinement on next kick-off
+            # leave_active — write signal file for project-leader to consume
+            refinement_text = build_refinement_text(done_task.slug, action.upstream_deliverables)
+            (downstream.folder / "NEEDS_REFINEMENT.md").write_text(
+                refinement_text, encoding="utf-8"
+            )
             say(f"task {action.task_slug}: upstream {done_task.slug} done, auto-refine on next run")
 
 

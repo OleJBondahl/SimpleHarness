@@ -23,6 +23,8 @@ from simpleharness.core import (
     _merge_config,
     _slugify,
     build_claude_cmd,
+    build_rebrief_text,
+    build_refinement_text,
     build_session_prompt,
     check_deliverables,
     compute_post_session_state,
@@ -992,3 +994,43 @@ def test_plan_tick_no_active_when_truly_none():
     wf = {"w": _workflow(name="w")}
     plan = plan_tick((t,), wf, frozenset(), _config())
     assert plan.kind == "no_active"
+
+
+# ── build_refinement_text ────────────────────────────────────────────────────
+
+
+def test_build_refinement_text_with_deliverables():
+    deliverables = (
+        Deliverable(path="output/report.md", description="Final report"),
+        Deliverable(path="output/data.json", description="Raw data"),
+    )
+    text = build_refinement_text("000-upstream", deliverables)
+    assert "000-upstream" in text
+    assert "`output/report.md`: Final report" in text
+    assert "`output/data.json`: Raw data" in text
+    assert "NEEDS_REFINEMENT" not in text  # file name not baked in
+    assert "# Refinement available" in text
+
+
+def test_build_refinement_text_no_deliverables():
+    text = build_refinement_text("000-upstream", ())
+    assert "(none declared)" in text
+    assert "000-upstream" in text
+
+
+# ── build_rebrief_text ───────────────────────────────────────────────────────
+
+
+def test_build_rebrief_text_with_deliverables():
+    deliverables = (Deliverable(path="output/spec.md", description="Updated spec"),)
+    text = build_rebrief_text("000-upstream", "002-downstream", deliverables)
+    assert "000-upstream" in text
+    assert "`output/spec.md`: Updated spec" in text
+    assert "simpleharness unblock 002-downstream" in text
+    assert "# Rebrief needed" in text
+
+
+def test_build_rebrief_text_no_deliverables():
+    text = build_rebrief_text("000-upstream", "002-downstream", ())
+    assert "(none declared)" in text
+    assert "simpleharness unblock 002-downstream" in text
