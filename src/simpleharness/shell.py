@@ -34,6 +34,7 @@ from simpleharness.core import (
     check_deliverables,
     compute_post_session_state,
     parse_task_spec,
+    pause_file_path,
     plan_downstream_transitions,
     plan_tick,
     resolve_next_role,
@@ -455,9 +456,13 @@ def cmd_watch(args: argparse.Namespace) -> int:
             tick_once(worksite, config)
             return 0
         say(
-            f"starting watch loop (idle sleep = {config.idle_sleep_seconds}s). Ctrl+C to interrupt."
+            f"starting watch loop (idle sleep = {config.idle_sleep_seconds}s). Ctrl+C to stop after current tick."
         )
         while True:
+            if pause_file_path(worksite).exists():
+                say("paused — run `simpleharness resume` to continue")
+                time.sleep(config.idle_sleep_seconds)
+                continue
             did_work = tick_once(worksite, config)
             if not did_work:
                 time.sleep(config.idle_sleep_seconds)
@@ -544,6 +549,28 @@ def cmd_unblock(args: argparse.Namespace) -> int:
     new_state = replace(state, status="active", blocked_reason=None, no_progress_ticks=0)
     write_state(target.state_path, new_state)
     say(f"unblocked {target.slug} (was: {prev})")
+    return 0
+
+
+def cmd_pause(args: argparse.Namespace) -> int:
+    worksite = worksite_root(args)
+    pf = pause_file_path(worksite)
+    if pf.exists():
+        say("already paused")
+        return 0
+    pf.write_text("paused\n", encoding="utf-8")
+    say("paused — the watch loop will idle until you run `simpleharness resume`")
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    worksite = worksite_root(args)
+    pf = pause_file_path(worksite)
+    if not pf.exists():
+        say("not paused")
+        return 0
+    pf.unlink()
+    say("resumed — next tick will run normally")
     return 0
 
 
@@ -778,6 +805,12 @@ def build_argparser() -> argparse.ArgumentParser:
 
     p_doctor = sub.add_parser("doctor", parents=[common], help="sanity checks")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    pa = sub.add_parser("pause", parents=[common], help="Pause the watch loop")
+    pa.set_defaults(func=cmd_pause)
+
+    re_ = sub.add_parser("resume", parents=[common], help="Resume a paused watch loop")
+    re_.set_defaults(func=cmd_resume)
 
     return p
 

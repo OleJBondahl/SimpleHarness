@@ -31,6 +31,7 @@ from simpleharness.core import (
     deps_satisfied,
     parse_frontmatter,
     parse_task_spec,
+    pause_file_path,
     pick_next_task,
     plan_downstream_transitions,
     plan_tick,
@@ -1095,3 +1096,11 @@ def test_state_cost_roundtrips_through_io(tmp_path):
     write_state(path, state)
     loaded = read_state(path)
     assert loaded.total_cost_usd == 2.75
+
+
+# ── pause_file_path ───────────────────────────────────────────────────────────
+
+
+def test_pause_file_path():
+    p = pause_file_path(Path("/worksite"))
+    assert p == Path("/worksite/simpleharness/.PAUSE")

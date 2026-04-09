@@ -394,6 +394,12 @@ def worksite_sh_dir(worksite: Path) -> Path:
 
 
 @deal.pure
+def pause_file_path(worksite: Path) -> Path:
+    """Return the path to the pause signal file."""
+    return worksite / "simpleharness" / ".PAUSE"
+
+
+@deal.pure
 def parse_task_spec(frontmatter: dict[str, Any]) -> TaskSpec:
     """Convert raw TASK.md frontmatter dict to a typed TaskSpec.
 
