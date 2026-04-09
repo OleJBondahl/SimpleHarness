@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -220,7 +220,7 @@ def worksite_sh_dir(worksite: Path) -> Path:
     return worksite / "simpleharness"
 
 
-def pick_next_task(tasks: list[Task], corrections: frozenset[str]) -> Task | None:
+def pick_next_task(tasks: Sequence[Task], corrections: frozenset[str]) -> Task | None:
     """Priority: CORRECTION.md exists > active non-blocked > lowest slug.
 
     ``corrections`` is the pre-computed set of task slugs that have a
@@ -472,7 +472,7 @@ def plan_tick(
     if not tasks:
         return TickPlan(kind="no_tasks")
 
-    task = pick_next_task(list(tasks), corrections)
+    task = pick_next_task(tasks, corrections)
     if task is None:
         return TickPlan(kind="no_active")
 

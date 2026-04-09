@@ -1089,7 +1089,17 @@ def tick_once(worksite: Path, config: Config) -> bool:
                 write_state(task.state_path, new_state)
                 return False
 
-            # capture pre-state hash for no-progress detection
+            # No-progress detection: pre_hash is taken BEFORE run_session, post_hash
+            # AFTER. The old apply_session_bookkeeping wrote harness fields
+            # (total_sessions, updated, last_role) BEFORE post_hash was taken, so
+            # post_hash always differed from pre_hash regardless of agent work —
+            # effectively masking the no-progress signal entirely. The new flow
+            # captures post_hash before compute_post_session_state writes anything,
+            # so post_hash == pre_hash now correctly means "agent made no edits to
+            # STATE.md during this session." Agents that work in source files
+            # without updating STATE.md will accumulate no_progress_ticks faster
+            # than under the old code. The default threshold is a warning, not a
+            # block, so this only surfaces as a soft nag.
             pre_hash = state_hash(task.state_path)
 
             # clear any stale next_role override (consumed by this session)
@@ -1113,10 +1123,6 @@ def tick_once(worksite: Path, config: Config) -> bool:
             post_hash = state_hash(task.state_path)
             current_state = read_state(task.state_path)
 
-            if post_hash != pre_hash and current_state.no_progress_ticks > 0:
-                # progress detected — warn if no-progress was accumulating
-                pass  # compute_post_session_state resets the counter
-
             new_state = compute_post_session_state(
                 current_state,
                 role.name,
@@ -1129,6 +1135,7 @@ def tick_once(worksite: Path, config: Config) -> bool:
                 now=datetime.now(UTC),
             )
 
+            # Warn only on the tick that first crosses the threshold, not every tick after.
             if (
                 new_state.no_progress_ticks >= config.no_progress_tick_threshold
                 and new_state.no_progress_ticks > current_state.no_progress_ticks
