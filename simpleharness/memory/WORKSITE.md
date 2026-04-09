@@ -16,17 +16,10 @@ Long-term notes that every session can read.
 - **Pre-merge gates (not yet run):** `shellcheck`, `docker compose config`, `docker compose build` — blocked by session permissions in all phases. Must run manually before merging.
 - Branch is 13 commits ahead of `origin/feature/dev-container`.
 
-## Task 003 — CLI error classifier and retry backoff (developer complete)
+## Task 003 — CLI error classifier and retry backoff (done)
 
-- **Implementation complete.** 7 commits on `feature/dev-container`, 329 tests passing.
-- **What was built:**
-  - `State` dataclass: `retry_count` (int) and `retry_after` (ISO str | None) fields, roundtrip through `io.py`
-  - `ClassifyResult` dataclass + `classify_cli_error` pure function: regex pattern table maps error text to `usage_limit | transient | fatal`
-  - `compute_backoff_delay`: fixed schedule `(30, 60, 120, 240, 300)` seconds
-  - `compute_post_session_state` extended: clears retry on success, bumps on transient, parks on usage_limit, blocks on fatal
-  - `pick_next_task` and `plan_tick` gain `now: datetime` param for backoff-aware filtering; new `all_backoff` TickPlan kind
-  - `shell.py`: `_extract_error_text` reads `.jsonl` logs, classifier wired into `tick_once`
-- **Security review fixes:** timezone-naive comparison (appends Z), malformed retry_after handling (`_parse_retry_after`), tightened timeout pattern
-- **Known low-priority items:** ReDoS potential in usage-limit regex (bounded by real CLI message lengths), unbounded `.jsonl` read (acceptable for current sizes), no length cap on `blocked_reason`
-- Next: project-leader reviews and wraps up.
-- Branch: `feature/dev-container`.
+- **Complete.** 8 commits on `feature/dev-container` (`442dc30`..`5c9dd62`), 329 tests passing, all quality gates clean.
+- **What was built:** Pure classifier (`classify_cli_error`) maps CLI errors to `usage_limit | transient | fatal`. Fixed backoff schedule `(30, 60, 120, 240, 300)`s with escalation to fatal. Watch loop skips tasks in backoff. Usage-limit parking without retry bump. Fatal → `status: blocked`.
+- **Security fixes applied:** timezone-naive comparison, malformed retry_after handling, over-broad timeout pattern.
+- **Known low-priority items:** ReDoS in usage-limit regex, unbounded `.jsonl` read, no `blocked_reason` length cap.
+- Task 004 (documentation) can reference the three error outcomes and backoff behavior.

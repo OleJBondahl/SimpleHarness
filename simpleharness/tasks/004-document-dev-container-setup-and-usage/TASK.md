@@ -58,3 +58,21 @@ The end state: a new developer can go from zero to a running container by follow
 ## Notes
 
 The existing `docs/usage.md` covers the harness CLI usage. This new doc should complement it, not overlap. Cross-reference where appropriate. The design spec (`docs/dev-container.md`) has detailed technical context but is not user-friendly — distill it into practical guidance.
+
+## Refinement from 003-implement-cli-error-classifier-and-retry-backoff-for-unatten
+
+Task 003 is complete. Here are the concrete error-handling behaviors to document:
+
+**Three error outcomes** (from `classify_cli_error` in `core.py`):
+- **`usage_limit`** — Claude API usage/rate limit hit. The harness parks the task until the reported reset time (stored in `retry_after` as an ISO 8601 timestamp). Does NOT count as a retry. The task resumes automatically after the window passes.
+- **`transient`** — Network timeouts, 503s, "overloaded" errors. The harness retries with a fixed backoff schedule: 30s, 60s, 120s, 240s, 300s. After 5 consecutive transient failures, the task is marked `status: blocked` with a clear reason.
+- **`fatal`** — Auth failures, invalid model, unknown errors. The task is immediately marked `status: blocked` with a `blocked_reason` explaining the failure. Unknown errors default to fatal (loud stop, not silent retry).
+
+**What the user sees in STATE.md:**
+- `retry_count: N` — how many consecutive transient retries have occurred (0 on success or usage_limit)
+- `retry_after: 2026-04-09T16:30:00Z` — ISO timestamp; the harness skips this task until this time passes
+- `status: blocked` + `blocked_reason: "..."` — permanent failure requiring user intervention
+
+**Behavior on success:** Both `retry_count` and `retry_after` are cleared, so the task returns to normal scheduling.
+
+**User-visible log messages:** Error text is extracted from the session's `.jsonl` log file. The `blocked_reason` in STATE.md contains the classifier's reason string, which is human-readable.
