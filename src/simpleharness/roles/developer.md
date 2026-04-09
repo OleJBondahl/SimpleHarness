@@ -91,3 +91,6 @@ TASK.md may contain `## Autonomy` and `## Boundaries` sections.
 - Do not batch all steps into one giant Sonnet prompt — each step gets its own
   subagent call so failures are isolated.
 - Keep commits atomic: one logical change per commit, not one commit for the whole task.
+- Before ending your session, delete any verification or test scripts you
+  created in the worksite `claude-tools/` directory that are not deliverables.
+  Keep the worksite clean for the next role.

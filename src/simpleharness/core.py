@@ -570,6 +570,10 @@ def build_session_prompt(
   Use Edit (not Write) to preserve the other fields the harness manages.
 - Git commits in the worksite with clear messages when your work is a
   logical unit.
+- If a WORKSITE.md memory file exists in the simpleharness/memory/ folder,
+  update it as your LAST action before ending the session (after all code
+  changes are committed). Never write WORKSITE.md mid-session — your notes
+  will become stale if you make further changes afterward.
 
 ## Subagent delegation (READ THIS)
 You are running on Opus — expensive context. BEFORE doing heavy reading or
@@ -591,6 +595,10 @@ Your own Opus context is for: decisions, synthesis, judgment, orchestration.
 - You may READ the toolbox for reference.
 - You may NOT edit files outside the worksite UNLESS your role explicitly
   says you can (project-leader is the only privileged role).
+- Run each shell command in a SEPARATE Bash tool call. Never chain with
+  `&&`, `||`, `;`, or newlines. Never use inline Python (`python -c`) —
+  write scripts to the worksite `claude-tools/` directory and run them
+  with `uv run python <script>`.
 - If you get stuck or confused: set STATE.status=blocked with a clear
   blocked_reason and STOP. Do not spin in circles.
 
