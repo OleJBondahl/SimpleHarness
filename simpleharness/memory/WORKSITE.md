@@ -8,9 +8,10 @@ Long-term notes that every session can read.
 - The doc is implementation-ready for downstream tasks 002/003.
 - Note: `docs/usage.md` also has stale `dangerous_auto_approve` references (out of scope for task 001).
 
-## Task 002 — create container artifacts (active, brainstorm phase)
+## Task 002 — create container artifacts (active, brainstorm → plan-writer)
 
-- Kickoff complete. Refinement from task 001 applied to TASK.md.
-- Next: brainstormer validates the spec (`docs/dev-container.md` §4.1–4.5) against the current codebase.
-- The spec contains complete file contents for all 5 deliverables — brainstormer should focus on validation, not design.
-- Key risks: Windows path handling, shellcheck compliance, `.gitattributes` coverage.
+- Brainstorm complete. All 6 spec line references validated against current codebase — all match (one minor drift: `session.py` function ends at line 75 not 73, no impact).
+- `.gitattributes` wildcard `* text=auto eol=lf` already covers all new files — no additions needed.
+- `simpleharness init`, `--worksite` flag, and `uv tool install -e` all confirmed to exist.
+- **Recommended approach:** Transcribe §4.1–4.5 code blocks verbatim, run shellcheck + `docker compose config` as validation. No deviations from spec identified.
+- Key risks remain: shellcheck compliance, named-volume shadowing, Windows path handling (can only fully test on host).
