@@ -359,6 +359,29 @@ class Workflow:
 
 
 @dataclass(frozen=True)
+class LoopConfig:
+    """Configuration for a loop phase block in a workflow."""
+
+    roles: tuple[str, ...]
+    max_cycles: int = 5
+    max_critic_rounds: int = 2
+    on_exhaust: str = "skip_and_flag"  # skip_and_flag | block
+
+
+@dataclass(frozen=True)
+class LoopState:
+    """Tracks progress through a loop phase. Managed by the harness, not roles."""
+
+    current_step: int = 0
+    total_steps: int = 0
+    cycle: int = 0
+    critic_rounds: int = 0
+    last_inner_role: str | None = None
+    flagged_steps: tuple[int, ...] = ()
+    inner_phase: str = "building"  # building | reviewing | critiquing | advancing | e2e_testing
+
+
+@dataclass(frozen=True)
 class State:
     """Persisted task lifecycle state written to STATE.md."""
 

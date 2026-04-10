@@ -15,6 +15,8 @@ from simpleharness.core import (
     Config,
     Deliverable,
     DownstreamAction,
+    LoopConfig,
+    LoopState,
     OllamaConfig,
     Permissions,
     Role,
@@ -1733,3 +1735,41 @@ def test_build_session_prompt_local_model_includes_correction():
         [],
     )
     assert "fix the typo in main.py" in prompt
+
+
+# ── LoopConfig / LoopState ───────────────────────────────────────────────────
+
+
+def test_loop_config_defaults():
+    lc = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    assert lc.max_cycles == 5
+    assert lc.max_critic_rounds == 2
+    assert lc.on_exhaust == "skip_and_flag"
+
+
+def test_loop_config_custom():
+    lc = LoopConfig(
+        roles=("local-builder", "local-reviewer", "local-critic"),
+        max_cycles=3,
+        max_critic_rounds=1,
+        on_exhaust="block",
+    )
+    assert lc.max_cycles == 3
+    assert lc.on_exhaust == "block"
+
+
+def test_loop_state_defaults():
+    ls = LoopState()
+    assert ls.current_step == 0
+    assert ls.total_steps == 0
+    assert ls.cycle == 0
+    assert ls.critic_rounds == 0
+    assert ls.last_inner_role is None
+    assert ls.flagged_steps == ()
+    assert ls.inner_phase == "building"
+
+
+def test_loop_state_frozen():
+    ls = LoopState()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cast("Any", ls).cycle = 1

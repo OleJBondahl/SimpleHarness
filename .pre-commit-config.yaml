@@ -65,6 +65,12 @@ repos:
         pass_filenames: false
         files: \.py$
 
+      - id: vale
+        name: vale (prose linting — docs only)
+        entry: vale --minAlertLevel=error
+        language: system
+        files: ^(docs/.*\.md|README\.md)$
+
       - id: detect-secrets
         name: detect secrets
         entry: uv run --group security detect-secrets-hook --baseline .secrets.baseline
