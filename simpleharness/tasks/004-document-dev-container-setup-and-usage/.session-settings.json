@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "C:\\Users\\OleJohanBondahl\\AppData\\Roaming\\uv\\tools\\simpleharness\\Scripts\\python.exe -m simpleharness.hooks.inform_skills"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "C:\\Users\\OleJohanBondahl\\AppData\\Roaming\\uv\\tools\\simpleharness\\Scripts\\python.exe -m simpleharness.hooks.enforce_must_use"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "command": "C:\\Users\\OleJohanBondahl\\AppData\\Roaming\\uv\\tools\\simpleharness\\Scripts\\python.exe -m simpleharness.hooks.enforce_must_use"
+      }
+    ]
+  }
+}

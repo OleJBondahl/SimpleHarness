@@ -28,3 +28,6 @@ claude-tools/
 
 .superpowers/
 docs/superpowers/
+
+# SimpleHarness runtime logs
+simpleharness/logs/
