@@ -19,7 +19,7 @@ repos:
         name: ty check
         entry: uv run ty check
         language: system
-        types_or: [python, pyi]
+        files: \.(py|pyi)$
         pass_filenames: false
         require_serial: true
 
@@ -49,25 +49,25 @@ repos:
         entry: bash -c 'npx codesight --wiki && git add .codesight/'
         language: system
         pass_filenames: false
-        types: [python]
+        files: \.py$
 
       - id: import-linter
         name: import-linter (architecture boundaries)
         entry: uv run lint-imports
         language: system
         pass_filenames: false
-        types: [python]
+        files: \.py$
 
       - id: vulture
         name: vulture (dead code)
-        entry: uv run vulture src --min-confidence 80
+        entry: uv run vulture
         language: system
         pass_filenames: false
-        types: [python]
+        files: \.py$
 
       - id: complexipy
-        name: complexipy (cognitive complexity — core modules)
-        entry: uv run complexipy src/simpleharness/core.py src/simpleharness/approver_core.py src/simpleharness/benchmark_core.py src/simpleharness/hooks --max-complexity-allowed 22
+        name: complexipy (cognitive complexity)
+        entry: uv run complexipy
         language: system
         pass_filenames: false
         files: ^src/simpleharness/(core|approver_core|benchmark_core|hooks/)

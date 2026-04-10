@@ -16,6 +16,8 @@ skills:
       hint: "audit and improve CLAUDE.md when harness config changes"
     - name: codebase-memory-exploring
       hint: "orient on codebase state for review decisions"
+    - name: hybrid-plan-writer
+      hint: "understand PLAN.md format when reviewing hybrid loop output"
   must_use: []
 ---
 

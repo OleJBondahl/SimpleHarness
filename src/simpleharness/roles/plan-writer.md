@@ -7,6 +7,8 @@ skills:
   available:
     - name: writing-plans
       hint: "structured plan authoring with steps, risks, and verification"
+    - name: hybrid-plan-writer
+      hint: "PLAN.md format for local model execution loop (use with feature-build-hybrid workflow)"
     - name: using-git-worktrees
       hint: "isolate feature work from current workspace"
     - name: brainstorming
