@@ -36,7 +36,6 @@ from simpleharness.core import (
     parse_frontmatter,
     parse_skill_list,
     toolbox_root,
-    worksite_sh_dir,
 )
 from simpleharness.process import pid_alive
 
@@ -560,7 +559,8 @@ def consume_correction(task: Task) -> str | None:
         return None
     text = cpath.read_text(encoding="utf-8")
     # Audit log
-    log_dir = worksite_sh_dir(Path(task.state.worksite)) / "logs" / task.slug
+    # task.folder = <worksite>/simpleharness/tasks/<slug>/, so .parent.parent = simpleharness/
+    log_dir = task.folder.parent.parent / "logs" / task.slug
     log_dir.mkdir(parents=True, exist_ok=True)
     with (log_dir / "corrections.log").open("a", encoding="utf-8") as f:
         f.write(f"\n----- {now_iso()} -----\n{text}\n")

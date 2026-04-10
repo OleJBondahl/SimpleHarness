@@ -629,6 +629,7 @@ def build_session_prompt(
     phase_files: list[Path],
     phase_previews: Mapping[str, str] | None = None,
     worksite_memory_preview: str | None = None,
+    worksite: Path | None = None,
 ) -> str:
     """Assemble the spatial-awareness preamble + phase instructions.
 
@@ -675,7 +676,7 @@ def build_session_prompt(
     prompt = f"""{correction_block}You are running inside SimpleHarness, a baton-pass agent harness.
 
 ## Where you are
-- Worksite (the code/text you work on): {task.state.worksite}
+- Worksite (the code/text you work on): {worksite or task.state.worksite}
 - Toolbox (your brain, role files, workflows): {toolbox}
 - Current task folder: {task.folder}
 - Your role: {role.name}

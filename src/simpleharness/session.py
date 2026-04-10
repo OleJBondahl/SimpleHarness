@@ -275,7 +275,9 @@ def write_correction_md(task: Task, lines: list[str]) -> Path:
     return path
 
 
-def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> SessionResult:
+def run_session(
+    task: Task, role: Role, workflow: Workflow, config: Config, worksite: Path
+) -> SessionResult:
     """Build prompt, spawn claude, stream output, handle SIGINT. Single session."""
     toolbox = toolbox_root()
 
@@ -297,7 +299,7 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
             pass
     # Read WORKSITE.md cross-session memory for prompt preview
     worksite_memory_preview: str | None = None
-    memory_path = worksite_sh_dir(Path(task.state.worksite)) / "memory" / "WORKSITE.md"
+    memory_path = worksite_sh_dir(worksite) / "memory" / "WORKSITE.md"
     if memory_path.exists():
         try:
             raw = memory_path.read_text(encoding="utf-8")
@@ -321,11 +323,12 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
         phase_files,
         phase_previews,
         worksite_memory_preview=worksite_memory_preview,
+        worksite=worksite,
     )
     prompt_file = write_session_prompt_file(task, prompt)
 
     # 3. log paths
-    log_root = worksite_sh_dir(Path(task.state.worksite)) / "logs" / task.slug
+    log_root = worksite_sh_dir(worksite) / "logs" / task.slug
     idx = task.state.total_sessions
     stem = f"{idx:02d}-{role.name}"
     jsonl_log = log_root / f"{stem}.jsonl"
@@ -334,7 +337,7 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     # 4. export subagents to <worksite>/.claude/agents/
     subagents = load_all_subagents()
     if subagents:
-        agents_dir = Path(task.state.worksite) / ".claude" / "agents"
+        agents_dir = worksite / ".claude" / "agents"
         agents_dir.mkdir(parents=True, exist_ok=True)
         defaults = SkillList(
             available=config.skills.default_available,
@@ -382,14 +385,14 @@ def run_session(task: Task, role: Role, workflow: Workflow, config: Config) -> S
     if config.permissions.mode == "approver":
         approver_base = {
             "SIMPLEHARNESS_STREAM_LOG": jsonl_log.as_posix(),
-            "SIMPLEHARNESS_WORKSITE": Path(task.state.worksite).as_posix(),
+            "SIMPLEHARNESS_WORKSITE": worksite.as_posix(),
             "SIMPLEHARNESS_APPROVER_MODEL": config.permissions.approver_model,
             "SIMPLEHARNESS_TASK_SLUG": task.slug,
         }
     extra_env: dict[str, str] = build_session_env(approver_base, role, subagents, config)
 
     # 8. spawn + stream
-    proc = spawn_claude(cmd, Path(task.state.worksite), extra_env=extra_env)
+    proc = spawn_claude(cmd, worksite, extra_env=extra_env)
     interrupted = False
     result_session_id: str | None = None
     result_text: str | None = None

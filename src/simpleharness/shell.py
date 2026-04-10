@@ -318,7 +318,7 @@ def tick_once(worksite: Path, config: Config) -> bool:
             prev_consecutive_same_role = task.state.consecutive_same_role
 
             try:
-                session = run_session(task, role, workflow, config)
+                session = run_session(task, role, workflow, config, worksite)
             except KeyboardInterrupt:
                 say("aborted by user, exiting")
                 raise
@@ -329,7 +329,7 @@ def tick_once(worksite: Path, config: Config) -> bool:
             # ── classify CLI errors for retry/backoff ────────────────────
             classify_result = None
             if not session.completed and not session.interrupted and session.exit_code != 0:
-                log_root = worksite_sh_dir(Path(task.state.worksite)) / "logs" / task.slug
+                log_root = worksite_sh_dir(worksite) / "logs" / task.slug
                 jsonl_files = sorted(log_root.glob("*.jsonl")) if log_root.exists() else []
                 jsonl_log = jsonl_files[-1] if jsonl_files else log_root / "missing.jsonl"
                 error_text = _extract_error_text(jsonl_log)
@@ -478,8 +478,8 @@ def cmd_new(args: argparse.Namespace) -> int:
     state = State(
         task_slug=slug,
         workflow=args.workflow,
-        worksite=str(worksite),
-        toolbox=str(toolbox_root()),
+        worksite=".",
+        toolbox=".",
         status="active",
         phase="kickoff",
         next_role=None,
@@ -594,7 +594,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     console.print(f"status: {t.state.status}")
     console.print(f"phase: {t.state.phase}")
     console.print(f"workflow: {t.state.workflow}")
-    console.print(f"worksite: {t.state.worksite}")
+    console.print(f"worksite: {worksite_root(args)}")
     console.print(f"last_role: {t.state.last_role}")
     console.print(f"next_role: {t.state.next_role}")
     console.print(f"sessions: {t.state.total_sessions}/{t.state.session_cap}")
