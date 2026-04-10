@@ -272,7 +272,7 @@ class _FileLock:
             self._fd = fd
             return self
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
         # NOTE: On Windows the fd MUST be closed before os.unlink, otherwise
         # the unlink fails with a sharing violation. Preserve this ordering.
         if self._fd is not None:

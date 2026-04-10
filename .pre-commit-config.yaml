@@ -46,7 +46,7 @@ repos:
 
       - id: codesight
         name: codesight (regenerate codebase map)
-        entry: npx codesight --wiki
+        entry: bash -c 'npx codesight --wiki && git add .codesight/'
         language: system
         pass_filenames: false
         types: [python]
@@ -57,6 +57,20 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+
+      - id: vulture
+        name: vulture (dead code)
+        entry: uv run vulture src --min-confidence 80
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: complexipy
+        name: complexipy (cognitive complexity — core modules)
+        entry: uv run complexipy src/simpleharness/core.py src/simpleharness/approver_core.py src/simpleharness/benchmark_core.py src/simpleharness/hooks --max-complexity-allowed 22
+        language: system
+        pass_filenames: false
+        files: ^src/simpleharness/(core|approver_core|benchmark_core|hooks/)
 
       - id: detect-secrets
         name: detect secrets

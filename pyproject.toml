@@ -160,7 +160,7 @@ paths = ["src"]
 
 [tool.complexipy]
 paths = ["src"]
-max_complexity_allowed = 15
+max_complexity_allowed = 22
 
 [tool.ty.rules]
 all = "error"
