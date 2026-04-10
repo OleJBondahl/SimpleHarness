@@ -1,5 +1,11 @@
 # SimpleHarness
 
+> **Status: Alpha** — usable, but expect rough edges. Clone it, try it, [open an issue](https://github.com/OleJBondahl/SimpleHarness/issues) with what breaks.
+
+![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Status: Alpha](https://img.shields.io/badge/status-alpha-orange)
+
 ```
    ┌───────────────────────────────────────────────┐
    │            S I M P L E H A R N E S S          │
@@ -11,24 +17,26 @@
         └── fresh context · state on disk ─────┘
 ```
 
-A lightweight harness that runs sequences of short, focused `claude -p` sessions instead of one long interactive session. Each session gets a fresh context window, a narrow role-specific prompt, and reads/writes state to disk. You define the roles, workflows, and rules.
+Runs sequences of short, focused `claude -p` sessions instead of one long interactive session. Each session gets a fresh context window, a narrow role prompt, and reads/writes state to disk. You define the roles, workflows, and rules.
 
-## Philosophy
+## Why this exists
 
-**Long Claude Code sessions degrade.** Context fills up, the model drifts from the spec, and you end up babysitting. SimpleHarness fixes this by splitting work into a baton-pass of short sessions — each with a clean context window, a single role, and a clear brief.
+Long Claude Code sessions degrade. Context fills up, the model drifts from the spec, and you end up babysitting. SimpleHarness splits work into a baton-pass of short sessions, each with a clean context window, a single role, and a clear brief.
 
-**Thin wrapper, not a framework.** No SDK. No runtime. No external dependencies beyond Python and PyYAML. SimpleHarness is a loop that spawns `claude -p`, reads a STATE.md file, and decides what to do next. Roles are markdown files. Workflows are markdown files. Configuration is YAML. Everything is readable, editable, and replaceable.
+It is a loop, not a framework. No SDK, no runtime. It spawns `claude -p`, reads a STATE.md file, and decides what to do next. Roles are markdown files. Workflows are markdown files. Configuration is YAML. You can read, edit, or replace any of it.
 
-**Bring your own everything.** The seed roles (leader, brainstormer, planner, developer) are starting points. Write your own. Swap them out. Define workflows that match how you actually work — not how a framework thinks you should.
+The seed roles (leader, brainstormer, planner, developer) are starting points. Write your own. Swap them out. Define workflows that match how you actually work.
 
-**Run unattended.** Start it, walk away. Cost tracking, session caps, and no-progress detection keep things under control. Hit Ctrl+C to course-correct mid-flight — your correction gets injected into the next session's prompt. Deploy in a dev container for fully hands-off operation.
+Start it, walk away. Cost tracking, session caps, and no-progress detection keep things under control. Ctrl+C mid-session drops you into a correction prompt that gets injected into the next run. Or deploy in a dev container and don't touch it at all.
 
-**Context efficiency is the feature.** Every token matters when you're paying per session. Fresh context per role means no accumulated noise. Phase file previews give each session just enough history. The result: less drift, lower cost, better output.
+Fresh context per role means no accumulated noise. Phase file previews give each session just enough history. Less drift, lower cost, better output.
 
-## Quick Start
+## Quick start
 
 ```bash
-pip install simpleharness          # or: uv add simpleharness
+git clone https://github.com/OleJBondahl/SimpleHarness.git
+cd SimpleHarness
+uv sync                             # install dependencies
 
 cd /your/project
 simpleharness init                  # creates simpleharness/ directory
@@ -36,7 +44,7 @@ simpleharness new "add auth layer"  # creates a task
 simpleharness watch                 # runs the baton-pass loop
 ```
 
-## How It Works
+## How it works
 
 1. Scan `tasks/` for active tasks
 2. Determine next role from workflow or `STATE.next_role`
@@ -45,22 +53,22 @@ simpleharness watch                 # runs the baton-pass loop
 5. Read updated STATE.md → advance or block
 6. Loop until done (idle at 30s heartbeat)
 
-Mid-flight steering: `Ctrl+C` during a session kills the child process, drops you into a correction prompt, saves to CORRECTION.md, and resumes on the next tick.
+`Ctrl+C` during a session kills the child process, drops you into a correction prompt, saves to CORRECTION.md, and resumes on the next tick.
 
-## Features
+## What you get
 
-| Feature | What it does |
+| | |
 |---|---|
-| **Baton-pass sessions** | Fresh context per role. No bloat accumulation. |
-| **Custom roles** | Markdown files. Write your own or use the seeds. |
-| **Custom workflows** | Define phase sequences. `universal` or `feature-build` included. |
-| **Approver hook** | Three permission modes: `safe`, `approver`, `dangerous`. |
-| **Cost tracking** | Per-session and per-task USD cost + duration. |
-| **Task dependencies** | `depends_on`, deliverables with `min_lines` verification. |
-| **Pause / resume** | `.PAUSE` signal file or CLI commands. |
-| **Mid-flight steering** | Ctrl+C → correction prompt → injected next session. |
-| **Rich dashboard** | `simpleharness status` — progress, cost, blocked reasons. |
-| **Dev container ready** | Unattended runs with sandbox detection. |
+| Baton-pass sessions | Fresh context per role, no bloat accumulation |
+| Custom roles | Markdown files. Write your own or use the seeds |
+| Custom workflows | Define phase sequences. `universal` and `feature-build` included |
+| Approver hook | Three permission modes: `safe`, `approver`, `dangerous` |
+| Cost tracking | Per-session and per-task USD cost and duration |
+| Task dependencies | `depends_on`, deliverables with `min_lines` verification |
+| Pause / resume | `.PAUSE` signal file or CLI commands |
+| Mid-flight steering | Ctrl+C, correction prompt, injected next session |
+| Rich dashboard | `simpleharness status` shows progress, cost, blocked reasons |
+| Dev container ready | Unattended runs with sandbox detection |
 
 ## Commands
 
@@ -91,9 +99,9 @@ skills:
 
 ## Permissions
 
-- **`safe`** (default) — `--permission-mode acceptEdits` + curated Bash allowlist
-- **`approver`** — two-layer hook: fast Bash pattern match → Sonnet approver session on cache miss
-- **`dangerous`** — `bypassPermissions`, dev containers only (`doctor` enforces sandbox)
+- `safe` (default): `--permission-mode acceptEdits` with a curated Bash allowlist
+- `approver`: two-layer hook. Fast Bash pattern match first, then a Sonnet approver session on cache miss
+- `dangerous`: `bypassPermissions`, dev containers only (`doctor` enforces sandbox)
 
 ## Architecture
 
@@ -120,7 +128,7 @@ your-project/
 └── config.yaml
 ```
 
-## Writing Custom Roles
+## Writing custom roles
 
 A role is a markdown file in `roles/`. It becomes the system prompt for that session.
 
@@ -136,7 +144,7 @@ Focus on: security, correctness, test coverage.
 Write your findings to phases/review.md.
 ```
 
-## Writing Custom Workflows
+## Writing custom workflows
 
 A workflow defines the sequence of roles:
 
@@ -155,9 +163,27 @@ phases:
 
 - Python ≥ 3.13
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- No API keys.
+- No API keys needed. Claude Code handles authentication.
 
-See [docs/usage.md](docs/usage.md) for detailed usage reference, TASK.md schema, and directory layout.
+## Skills
+
+SimpleHarness roles reference [Claude Code skills](https://github.com/OleJBondahl/claude-skills) for documentation writing, code review, debugging, and more. To use the same skill set:
+
+```bash
+git clone https://github.com/OleJBondahl/claude-skills.git ~/.claude/skills
+```
+
+Or copy individual skill folders from the repo into `~/.claude/skills/`.
+
+[docs/usage.md](docs/usage.md) has the full reference: TASK.md schema, directory layout, and configuration details.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, code style, and PR expectations.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for what's shipped so far.
 
 ## License
 

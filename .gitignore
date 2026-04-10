@@ -17,8 +17,8 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Claude Code local overrides (keep settings.json, ignore .local.json)
-.claude/settings.local.json
+# Claude Code user-local config (contributors shouldn't commit their .claude/)
+.claude/
 
 # Per-repo scratch scripts that agents use for ad-hoc verification
 claude-tools/
