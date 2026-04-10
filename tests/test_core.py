@@ -1723,10 +1723,10 @@ def test_build_session_prompt_local_model_is_minimal():
     task = _task(state=_state(phase="execution"))
     wf = _workflow()
     prompt = build_session_prompt(task, role, wf, Path("/toolbox"), None, [])
-    assert "local coding assistant" in prompt
+    assert "autonomous coding agent" in prompt.lower()
     assert "Opus" not in prompt
     assert "subagent" not in prompt.lower()
-    assert len(prompt) < 600  # should be much shorter than the full prompt
+    assert len(prompt) < 1000  # should be much shorter than the full prompt
 
 
 def test_build_session_prompt_local_model_includes_correction():

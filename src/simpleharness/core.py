@@ -972,17 +972,28 @@ def _build_local_session_prompt(
                     f"(Critic round {ls.critic_rounds} — apply the suggestions from CRITIQUE.md.)\n"
                 )
 
-    return f"""{correction}You are a local coding assistant in SimpleHarness.
+    task_folder_rel = f"./simpleharness/tasks/{task.slug}"
+    plan_path = f"{task_folder_rel}/PLAN.md"
+    state_path = f"{task_folder_rel}/STATE.md"
 
-Worksite: {worksite or task.state.worksite}
-Task folder: {task.folder}
-Role: {role.name} | Phase: {task.state.phase}
-Existing files: {existing}
+    return f"""{correction}You are an autonomous coding agent. There is NO human. NEVER ask questions.
+
+Working directory: /worksite
+Task: {task.slug}
+Plan: {plan_path}
+State: {state_path}
+Existing phase files: {existing}
 {loop_context}
-Read TASK.md and STATE.md, do your work, then update STATE.md.
-Write a phase file (0X-{role.name.replace("-", "_")}.md) recording what you did.
-Run each shell command in a SEPARATE Bash call. Never chain with && or ;.
-If stuck, set STATE.status=blocked and stop.
+YOUR JOB:
+1. Read {plan_path} and find your step instructions.
+2. Implement exactly what the step says.
+3. Run `uv run pytest -v` and `uv run ruff check .` (each in a separate Bash call).
+4. Fix any failures and re-run until both pass.
+5. Commit your changes with `git add -A` then `git commit -m "task({task.slug}): describe what you did"`.
+6. Use Edit on {state_path} to update the `phase:` field.
+
+If a file is empty or contains only a docstring, that is NORMAL — write the full content.
+If stuck, Edit {state_path} to set status: blocked and blocked_reason, then stop.
 """
 
 
