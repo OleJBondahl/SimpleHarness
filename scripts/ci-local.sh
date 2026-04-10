@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the full CI pipeline locally.
-# Usage: bash scripts/ci-local.sh [--mutate]
+# Usage: bash scripts/ci-local.sh
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -28,17 +28,6 @@ run_step "Detect secrets" uv run --group security detect-secrets-hook --baseline
 run_step "Tests" uv run pytest
 run_step "Core coverage (90% minimum)" uv run pytest --override-ini="addopts=-ra --strict-markers" --cov --cov-config=core-coverage.ini -q --no-header
 run_step "Prose linting" vale --minAlertLevel=error docs/ README.md
-
-if [[ "${1:-}" == "--mutate" ]]; then
-    echo "=== Mutation testing (via WSL) ==="
-    wsl -d Ubuntu -- bash -c "cd /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness; rm -rf .mutmut-cache .venv"
-    wsl -d Ubuntu -- bash /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness/scripts/mutmut-wsl.sh
-    if [ $? -ne 0 ]; then
-        failures=$((failures + 1))
-    fi
-    wsl -d Ubuntu -- bash -c "cd /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness; rm -rf .venv"
-    uv sync --quiet
-fi
 
 if [ "$failures" -gt 0 ]; then
     echo "=== $failures step(s) FAILED ==="

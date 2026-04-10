@@ -34,8 +34,6 @@ docs/superpowers/
 .codesight/
 .vale/
 .hypothesis/
-.mutmut-cache/
-mutants/
 
 # SimpleHarness runtime logs
 simpleharness/logs/

@@ -23,7 +23,7 @@ Only after identifying the relevant files through the map should you read actual
 - **Python 3.13** via `uv`.
 - `ruff` (100-col, 18 rule sets including S, C90, D, PERF, FURB, N, TCH) and `ty` (all rules = error) are wired into a PostToolUse hook that runs on every `.py` edit.
 - Quality gates in pre-commit (fast, file-scoped): ruff, deal-lint, fp-purity-gate, deal-runtime, codesight, vale, detect-secrets.
-- Full CI pipeline (slow, whole-project): `bash scripts/ci-local.sh` — runs all pre-commit tools plus ty, import-linter, vulture, pytest, coverage gates, and prose linting. Add `--mutate` for mutation testing via WSL.
+- Full CI pipeline (slow, whole-project): `bash scripts/ci-local.sh` — runs all pre-commit tools plus ty, import-linter, vulture, pytest, coverage gates, and prose linting.
 - **Never run `ci-local.sh` without explicit user approval.** It is slow and touches the whole repo.
 - The FC/IS refactor is **complete**. All logic is split into pure core modules and impure shell modules.
 

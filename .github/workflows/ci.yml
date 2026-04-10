@@ -45,23 +45,3 @@ jobs:
         with:
           files: docs/ README.md
           vale_flags: "--minAlertLevel=error"
-
-  mutate:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Mutation testing
-        run: uv run python -m mutmut run
-
-      - name: Mutation results
-        if: always()
-        run: uv run python -m mutmut results

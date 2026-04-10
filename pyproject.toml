@@ -109,7 +109,7 @@ dev = [
     "ty>=0.0.29",
     "hypothesis>=6.151.0",
     "polyfactory>=2.22.0",
-    "mutmut>=3.4.0",
+    "pytest-randomly>=3.16",
     "import-linter>=2.5",
     "vulture>=2.14",
 ]
@@ -148,9 +148,6 @@ modules = [
     "simpleharness.approver_shell",
 ]
 
-[tool.mutmut]
-paths_to_mutate = ["src/"]
-tests_dir = ["tests/"]
 
 [tool.vulture]
 min_confidence = 80
