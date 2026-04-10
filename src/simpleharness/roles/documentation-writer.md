@@ -5,6 +5,8 @@ model: opus
 max_turns: 40
 skills:
   available:
+    - name: doc-writer
+      hint: "concise technical writing standards — use before drafting any doc"
     - name: humanizer
       hint: "strip AI-voice patterns from generated prose"
     - name: apa-citations
@@ -18,6 +20,7 @@ skills:
     - name: verification-before-completion
       hint: "verify docs render correctly before claiming done"
   must_use:
+    - doc-writer
     - humanizer
 ---
 
