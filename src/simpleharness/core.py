@@ -146,7 +146,7 @@ class Subagent:
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
 
-@deal.has()
+@deal.chain(deal.has(), deal.raises(ValueError))
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Parse a markdown file with YAML frontmatter. Returns (metadata, body).
 
@@ -181,16 +181,20 @@ def toolbox_root() -> Path:
 
 @deal.pure
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    out = dict(base)
-    for k, v in override.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _merge_config(out[k], v)
-        else:
-            out[k] = v
-    return out
+    result = dict(base)
+    stack: list[tuple[dict[str, Any], dict[str, Any]]] = [(result, override)]
+    while stack:
+        target, source = stack.pop()
+        for k, v in source.items():
+            if isinstance(v, dict) and isinstance(target.get(k), dict):
+                target[k] = dict(target[k])
+                stack.append((target[k], v))
+            else:
+                target[k] = v
+    return result
 
 
-@deal.has()
+@deal.chain(deal.has(), deal.raises(ValueError))
 def parse_skill_list(raw: Any) -> SkillList:
     """Parse the `skills:` block from frontmatter into a SkillList.
 

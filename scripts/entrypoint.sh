@@ -16,12 +16,16 @@ git config --global --add safe.directory /worksite
 git config --global --add safe.directory /opt/simpleharness
 
 # First-run install of the harness. No-op on subsequent runs because the
-# uv tool venv lives in the persistent home volume. Copies to /tmp first
-# because setuptools needs to write egg-info and /opt/simpleharness may
-# be read-only.
+# uv tool venv lives in the persistent home volume. Copies only the
+# installable files to /tmp because setuptools needs to write egg-info
+# and /opt/simpleharness may be read-only. Copying just src/ +
+# pyproject.toml avoids the slow full-repo cp (.git, .venv, etc.).
 if ! command -v simpleharness >/dev/null 2>&1; then
   echo "[entrypoint] installing simpleharness from /opt/simpleharness ..."
-  cp -r /opt/simpleharness /tmp/simpleharness-build
+  mkdir -p /tmp/simpleharness-build
+  cp -r /opt/simpleharness/src /tmp/simpleharness-build/src
+  cp /opt/simpleharness/pyproject.toml /tmp/simpleharness-build/
+  cp /opt/simpleharness/README.md /tmp/simpleharness-build/ 2>/dev/null || true
   uv tool install /tmp/simpleharness-build
   rm -rf /tmp/simpleharness-build
 fi

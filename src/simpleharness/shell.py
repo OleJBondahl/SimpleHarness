@@ -715,7 +715,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     # toolbox reachable?
     tb = toolbox_root()
-    if (tb / "harness.py").exists():
+    if (tb / "core.py").exists():
         say(f"toolbox: {tb}", style="green")
     else:
         err(f"toolbox path wrong: {tb}")

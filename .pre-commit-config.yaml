@@ -37,6 +37,13 @@ repos:
         pass_filenames: false
         files: ^(src/simpleharness/(core|approver_core)\.py|scripts/check_fp_purity\.py)$
 
+      - id: deal-runtime
+        name: deal runtime contracts
+        entry: uv run python -X utf8 scripts/check_deal_runtime.py
+        language: system
+        files: ^src/simpleharness/(core|approver_core)\.py$
+        pass_filenames: false
+
       - id: detect-secrets
         name: detect secrets
         entry: uv run --group security detect-secrets-hook --baseline .secrets.baseline

@@ -10,26 +10,41 @@ import sys
 from pathlib import Path
 
 
+def _is_deal_attr(node: ast.expr, names: set[str]) -> bool:
+    """Check if *node* is ``deal.<name>`` for any name in *names*."""
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "deal"
+        and node.attr in names
+    )
+
+
+def _is_deal_call(node: ast.expr, names: set[str]) -> bool:
+    """Check if *node* is ``deal.<name>(...)`` for any name in *names*."""
+    return isinstance(node, ast.Call) and _is_deal_attr(node.func, names)
+
+
+_VALID_DEAL_NAMES = {"pure", "has", "safe"}
+
+
 def _has_deal_decorator(decorators: list[ast.expr]) -> bool:
-    """Accept either @deal.pure or @deal.has() as a valid FP-purity decorator."""
+    """Accept @deal.pure, @deal.has(), or @deal.chain(...) containing deal.has/deal.pure."""
     for d in decorators:
-        # @deal.pure (bare attribute, no parens)
-        if (
-            isinstance(d, ast.Attribute)
-            and isinstance(d.value, ast.Name)
-            and d.value.id == "deal"
-            and d.attr in ("pure", "has", "safe")
-        ):
+        # @deal.pure (bare attribute)
+        if _is_deal_attr(d, _VALID_DEAL_NAMES):
             return True
         # @deal.pure() or @deal.has(...) (call form)
-        if (
-            isinstance(d, ast.Call)
-            and isinstance(d.func, ast.Attribute)
-            and isinstance(d.func.value, ast.Name)
-            and d.func.value.id == "deal"
-            and d.func.attr in ("pure", "has", "safe")
-        ):
+        if _is_deal_call(d, _VALID_DEAL_NAMES):
             return True
+        # @deal.chain(deal.has(), deal.raises(ValueError)) — accept if any
+        # positional arg is a recognised deal contract
+        if _is_deal_call(d, {"chain"}) and isinstance(d, ast.Call):
+            for arg in d.args:
+                if _is_deal_attr(arg, _VALID_DEAL_NAMES):
+                    return True
+                if _is_deal_call(arg, _VALID_DEAL_NAMES | {"raises"}):
+                    return True
     return False
 
 
