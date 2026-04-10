@@ -52,11 +52,53 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-extend-select = ["I", "B", "UP", "SIM", "RUF", "D"]
-extend-ignore = ["D100", "D104", "D105", "D107"]
+extend-select = [
+    "I",      # isort — import ordering
+    "B",      # flake8-bugbear — common gotchas
+    "UP",     # pyupgrade — modernize syntax
+    "SIM",    # flake8-simplify — simplifiable code
+    "RUF",    # ruff-specific rules
+    "D",      # pydocstyle — docstrings
+    "S",      # flake8-bandit — security (replaces standalone bandit)
+    "C90",    # mccabe — cyclomatic complexity
+    "C4",     # flake8-comprehensions — unnecessary comprehensions
+    "A",      # flake8-builtins — shadowing builtins
+    "T20",    # flake8-print — no print() in production code
+    "PT",     # flake8-pytest-style — pytest best practices
+    "TID",    # flake8-tidy-imports — import hygiene
+    "PERF",   # perflint — performance anti-patterns
+    "FURB",   # refurb — modern Python idioms
+    "LOG",    # flake8-logging — logging best practices
+    "N",      # pep8-naming — naming conventions
+    "TCH",    # flake8-type-checking — TYPE_CHECKING imports
+]
+extend-ignore = [
+    "D100",   # missing docstring in public module
+    "D104",   # missing docstring in public package
+    "D105",   # missing docstring in magic method
+    "D107",   # missing docstring in __init__
+    "S101",   # assert used — we use assert in tests and deal contracts
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.per-file-ignores]
+# Shell modules: allow print, relax complexity
+"src/simpleharness/shell.py" = ["T20", "C90", "S603", "S607"]
+"src/simpleharness/approver_shell.py" = ["T20", "C90", "S603", "S607"]
+"src/simpleharness/session.py" = ["T20", "C90", "S603", "S607"]
+"src/simpleharness/io.py" = ["T20", "C90"]
+"src/simpleharness/process.py" = ["T20", "S603", "S607"]
+"src/simpleharness/benchmark.py" = ["T20", "C90", "S603", "S607"]
+"src/simpleharness/ui.py" = ["T20"]
+# Tests: relax docstrings, asserts, print, security, naming
+"tests/**" = ["D", "S", "T20", "PT", "N"]
+# Scripts: relax docstrings, print, security
+"scripts/**" = ["D", "T20", "S"]
 
 [dependency-groups]
 dev = [
@@ -75,7 +117,6 @@ security = [
     "detect-secrets>=1.5.0",
     "pip-audit>=2.7.0",
     "pip-licenses>=5.0.0",
-    "bandit>=1.8.0",
 ]
 
 [tool.pytest.ini_options]
@@ -119,3 +160,6 @@ paths = ["src"]
 [tool.complexipy]
 paths = ["src"]
 max_complexity_allowed = 15
+
+[tool.ty.rules]
+all = "error"
