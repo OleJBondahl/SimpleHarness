@@ -8,11 +8,21 @@ A Python harness for running and supervising Claude Code sessions (approver hook
 
 Invoke via the Skill tool: `python-coding-and-tooling`.
 
+## Codebase Orientation
+
+Before exploring source files, orient yourself through the auto-generated context in `.codesight/`. This map is regenerated on every commit via pre-commit hook.
+
+1. **Start here:** Read `.codesight/wiki/index.md` (~200 tokens) for a subsystem overview and article list.
+2. **For function signatures:** Read `.codesight/libs.md` — complete index of exported functions with parameters across all modules.
+3. **For the full picture:** Read `.codesight/CODESIGHT.md` (~4000 tokens) — combined libs, config, and coverage map.
+
+Only after identifying the relevant files through the map should you read actual source files. Do not glob or grep the codebase for orientation — the map already has it.
+
 ## Project-Specific Notes
 
 - **Python 3.13** via `uv`.
-- `ruff` (100-col, `extend-select = ["I", "B", "UP", "SIM", "RUF"]`) and `ty` are wired into a PostToolUse hook that runs on every `.py` edit.
-- Heavier quality checks (`complexipy`, `bandit`, `vulture`, `radon`) are not in the fast hook — run them explicitly when needed.
+- `ruff` (100-col, 18 rule sets including S, C90, D, PERF, FURB, N, TCH) and `ty` (all rules = error) are wired into a PostToolUse hook that runs on every `.py` edit.
+- Quality gates in pre-commit: ruff, ty, deal-lint, fp-purity-gate, import-linter (architecture boundaries), vulture (dead code), complexipy (cognitive complexity), codesight, detect-secrets.
 - The FC/IS refactor is **complete**. All logic is split into pure core modules and impure shell modules.
 
 ## Common Commands

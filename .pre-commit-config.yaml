@@ -44,6 +44,13 @@ repos:
         files: ^src/simpleharness/(core|approver_core)\.py$
         pass_filenames: false
 
+      - id: codesight
+        name: codesight (regenerate codebase map)
+        entry: npx codesight --wiki
+        language: system
+        pass_filenames: false
+        types: [python]
+
       - id: import-linter
         name: import-linter (architecture boundaries)
         entry: uv run lint-imports
