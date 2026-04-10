@@ -1729,6 +1729,20 @@ def test_build_session_prompt_local_model_is_minimal():
     assert len(prompt) < 1000  # should be much shorter than the full prompt
 
 
+def test_build_session_prompt_haiku_gets_lightweight_prompt():
+    """Haiku roles get the lightweight prompt, not the full Opus prompt."""
+    from simpleharness.core import build_session_prompt
+
+    role = Role(name="local-builder", body="builder", model="haiku")
+    task = _task(state=_state(phase="execution"))
+    wf = _workflow()
+    prompt = build_session_prompt(task, role, wf, Path("/toolbox"), None, [])
+    assert "autonomous coding agent" in prompt.lower()
+    assert "Opus" not in prompt
+    assert "subagent" not in prompt.lower()
+    assert len(prompt) < 1000
+
+
 def test_build_session_prompt_local_model_includes_correction():
     """Ollama prompt still includes user corrections when present."""
     from simpleharness.core import build_session_prompt

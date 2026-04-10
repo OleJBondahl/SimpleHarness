@@ -1019,8 +1019,8 @@ def build_session_prompt(
     ``phase_previews`` is an optional mapping from filename to preview text
     (first 20 lines) so agents get immediate context without extra tool calls.
     """
-    # ── Local-model (Ollama) prompt: minimal tokens, direct action ──────
-    if role.provider == "ollama":
+    # ── Lightweight prompt for non-Opus models (Ollama, Haiku, Sonnet) ──
+    if role.provider == "ollama" or role.model in ("haiku", "sonnet"):
         return _build_local_session_prompt(
             task,
             role,

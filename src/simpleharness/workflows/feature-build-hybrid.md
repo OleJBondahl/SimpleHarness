@@ -13,8 +13,8 @@ phases:
 max_sessions: 40
 ---
 
-Hybrid Opus/Local workflow. Opus handles architecture, design, and final review.
-Local Ollama models execute plan steps in a quality-gated loop:
+Hybrid Opus/Haiku workflow. Opus handles architecture, design, and final review.
+Haiku executes plan steps in a quality-gated loop:
 builder -> reviewer (pass/fail) -> critic (quality push) -> next step.
 
 The plan-writer produces PLAN.md with explicit numbered steps, each containing:
@@ -22,6 +22,6 @@ The plan-writer produces PLAN.md with explicit numbered steps, each containing:
 - Acceptance criteria (specific tests)
 - Quality wishlist (FP, complexity, patterns)
 
-The local loop implements each step, with the reviewer checking acceptance criteria
-and the critic pushing for quality improvements. Steps that exhaust retries are
-flagged for the final project-leader review.
+The loop implements each step with Haiku agents. The reviewer checks acceptance
+criteria and the critic pushes for quality improvements. Steps that exhaust
+retries are flagged for the final project-leader review.
