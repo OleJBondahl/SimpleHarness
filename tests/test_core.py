@@ -507,6 +507,20 @@ def test_resolve_next_role_empty_phases_returns_none():
     assert resolve_next_role(t, wf) is None
 
 
+def test_resolve_next_role_loop_state_with_non_loop_last_role():
+    """When loop_state exists but last_role isn't a loop role, return first loop role."""
+    lc = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    ls = LoopState(total_steps=1, inner_phase="building")
+    t = _task(
+        state=_state(last_role="plan-writer", loop_state=ls),
+    )
+    wf = Workflow(
+        name="hybrid",
+        phases=("project-leader", "brainstormer", "plan-writer", lc, "project-leader"),
+    )
+    assert resolve_next_role(t, wf) == "local-builder"
+
+
 # ── parse_frontmatter ─────────────────────────────────────────────────────────
 
 

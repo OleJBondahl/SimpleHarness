@@ -787,6 +787,10 @@ def _resolve_in_loop(
     if lc is not None:
         role, _new_ls = resolve_loop_role(ls, lc)
         return role
+    # last_role is not a loop role — entering loop for first time
+    for phase in phases:
+        if isinstance(phase, LoopConfig):
+            return phase.roles[0] if phase.roles else None
     return None
 
 
