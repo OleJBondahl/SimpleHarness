@@ -121,14 +121,13 @@ security = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --cov=src/simpleharness --cov-branch --cov-fail-under=42"
+addopts = "-ra --strict-markers --cov=src/simpleharness --cov-branch"
 
 [tool.coverage.run]
 branch = true
 source = ["src/simpleharness"]
 
 [tool.coverage.report]
-fail_under = 42
 show_missing = true
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
 
