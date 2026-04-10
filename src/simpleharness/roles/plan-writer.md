@@ -63,8 +63,23 @@ not write code.
   - **Risks** — up to 5 bullets: what could go wrong and the mitigation
   - **Verification** — how to confirm the work is done (commands to run, outputs
     to check)
-- STATE.md: set `phase=plan`, `next_role=developer`. If the task is too underspecified
-  to produce a confident plan, set `status=blocked` and explain in `blocked_reason`.
+- STATE.md: set `phase=plan`, `next_role=null`. The harness advances the workflow
+  automatically — never hardcode the next role name. If the task is too
+  underspecified to produce a confident plan, set `status=blocked` and explain in
+  `blocked_reason`.
+
+### Hybrid workflow (`feature-build-hybrid`)
+
+Check STATE.md for `workflow: feature-build-hybrid`. If found, you **must also**
+create `PLAN.md` in the task folder (alongside STATE.md and TASK.md) with:
+
+- `## Step N` headings (h2, not h3) for each step — the harness counts these to
+  drive the builder → reviewer → critic loop
+- Each step must include: **acceptance criteria** (for the reviewer) and a
+  **quality wishlist** (for the critic)
+
+The `02-plan.md` phase file still gets the full plan with context, risks, and
+verification. `PLAN.md` is the machine-readable contract that the loop roles read.
 
 ## Autonomy and boundaries
 

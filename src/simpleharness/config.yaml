@@ -46,7 +46,7 @@ permissions:
   #                container/VM — `simpleharness doctor` will refuse to
   #                start `watch` unless it detects a sandbox marker or you
   #                pass --i-know-its-dangerous.
-  mode: safe
+  mode: approver
 
   # Model used by the approver agent when mode=approver.
   # One of: haiku | sonnet | opus. Ignored in safe/dangerous modes.

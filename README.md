@@ -44,6 +44,72 @@ simpleharness new "add auth layer"  # creates a task
 simpleharness watch                 # runs the baton-pass loop
 ```
 
+## Install globally with uv
+
+```bash
+git clone https://github.com/OleJBondahl/SimpleHarness.git
+uv tool install ./SimpleHarness
+```
+
+This puts `simpleharness` on your PATH. To update after pulling new changes:
+
+```bash
+cd ~/SimpleHarness && git pull
+uv tool install --force --reinstall .
+```
+
+## Run in a dev container (recommended for autonomous work)
+
+The container isolates all agent activity — agents run with approver-mode
+permissions and can only touch the mounted worksite.
+
+### 1. Prepare the worksite
+
+From your host terminal (Git Bash):
+
+```bash
+# Init simpleharness in your target repo
+simpleharness init --worksite /path/to/your/repo
+
+# Create a task
+simpleharness new "your task title" --workflow=feature-build-hybrid \
+  --worksite /path/to/your/repo
+
+# Edit the TASK.md it created with your goal, success criteria, etc.
+```
+
+### 2. Launch the container
+
+```bash
+cd ~/SimpleHarness
+scripts/launch.sh --worksite /path/to/your/repo
+```
+
+First run builds the image and prompts you to log in to Claude Code (credentials
+persist in a Docker volume). Subsequent runs skip both steps.
+
+### 3. Start the harness inside the container
+
+```bash
+# Continuous loop (recommended — walk away and let it work)
+simpleharness watch
+
+# Or one tick at a time for debugging
+simpleharness watch --once
+```
+
+### 4. Monitor from the host
+
+While the container runs, inspect progress from your host:
+
+```bash
+cat /path/to/your/repo/simpleharness/tasks/*/STATE.md
+simpleharness status --worksite /path/to/your/repo
+```
+
+See [docs/dev-container-usage.md](docs/dev-container-usage.md) for the full
+container reference (multi-worksite, troubleshooting, cleanup).
+
 ## How it works
 
 1. Scan `tasks/` for active tasks
