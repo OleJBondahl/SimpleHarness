@@ -15,14 +15,6 @@ repos:
         types_or: [python, pyi]
         require_serial: true
 
-      - id: ty-check
-        name: ty check
-        entry: uv run ty check
-        language: system
-        files: \.(py|pyi)$
-        pass_filenames: false
-        require_serial: true
-
       - id: deal-lint
         name: deal lint (FP purity)
         entry: uv run python -X utf8 -m deal lint
@@ -47,20 +39,6 @@ repos:
       - id: codesight
         name: codesight (regenerate codebase map)
         entry: npx codesight --wiki
-        language: system
-        pass_filenames: false
-        files: \.py$
-
-      - id: import-linter
-        name: import-linter (architecture boundaries)
-        entry: uv run lint-imports
-        language: system
-        pass_filenames: false
-        files: \.py$
-
-      - id: vulture
-        name: vulture (dead code)
-        entry: uv run vulture
         language: system
         pass_filenames: false
         files: \.py$

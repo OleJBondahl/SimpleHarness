@@ -41,6 +41,7 @@ from simpleharness.core import (
     compute_backoff_delay,
     compute_post_session_state,
     deps_satisfied,
+    find_current_phase_index,
     format_task_dashboard,
     parse_frontmatter,
     parse_task_spec,
@@ -2026,3 +2027,185 @@ def test_state_no_loop_state_round_trip(tmp_path: Path):
     write_state(state_file, s)
     loaded = read_state(state_file)
     assert loaded.loop_state is None
+
+
+# ── plan_tick with loops ─────────────────────────────────────────────────────
+
+
+def test_plan_tick_enters_loop_phase():
+    loop = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    wf = Workflow(
+        name="hybrid",
+        phases=("plan-writer", loop, "project-leader"),
+    )
+    t = _task(state=_state(last_role="plan-writer", workflow="hybrid"))
+    plan = plan_tick((t,), {"hybrid": wf}, frozenset(), _config(), _FAR_PAST)
+    assert plan.kind == "run"
+    assert plan.run_role_name == "local-builder"
+    assert plan.init_loop_state is not None
+    assert plan.init_loop_state.inner_phase == "building"
+
+
+def test_plan_tick_continues_loop_reviewing():
+    loop = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    wf = Workflow(name="hybrid", phases=("plan-writer", loop, "project-leader"))
+    ls = LoopState(inner_phase="reviewing", total_steps=2, last_inner_role="local-builder")
+    t = _task(
+        state=_state(
+            last_role="local-builder",
+            workflow="hybrid",
+            loop_state=ls,
+        )
+    )
+    plan = plan_tick((t,), {"hybrid": wf}, frozenset(), _config(), _FAR_PAST)
+    assert plan.kind == "run"
+    assert plan.run_role_name == "local-reviewer"
+    assert plan.init_loop_state is None  # already in loop
+
+
+def test_plan_tick_exits_loop_when_done():
+    loop = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    wf = Workflow(name="hybrid", phases=("plan-writer", loop, "project-leader"))
+    ls = LoopState(inner_phase="done", total_steps=2)
+    t = _task(
+        state=_state(
+            last_role="local-builder",
+            workflow="hybrid",
+            loop_state=ls,
+        )
+    )
+    plan = plan_tick((t,), {"hybrid": wf}, frozenset(), _config(), _FAR_PAST)
+    assert plan.kind == "run"
+    assert plan.run_role_name == "project-leader"
+
+
+def test_find_current_phase_index_string():
+    phases = ("a", "b", "c")
+    assert find_current_phase_index(phases, "b") == 1
+
+
+def test_find_current_phase_index_loop_role():
+    loop = LoopConfig(roles=("local-builder", "local-reviewer"))
+    phases = ("a", loop, "c")
+    assert find_current_phase_index(phases, "local-builder") == 1
+    assert find_current_phase_index(phases, "local-reviewer") == 1
+
+
+def test_find_current_phase_index_none():
+    phases = ("a", "b")
+    assert find_current_phase_index(phases, "z") is None
+    assert find_current_phase_index(phases, None) is None
+
+
+# ── Full loop lifecycle integration tests ────────────────────────────────────
+
+
+def test_full_loop_lifecycle():
+    """Simulate complete loop: 2 steps, each passing on first try."""
+    lc = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    ls = LoopState(total_steps=2, inner_phase="building")
+
+    # Step 0: building -> dispatches builder, advances to reviewing
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+    assert ls.inner_phase == "reviewing"
+
+    # Step 0: reviewing -> dispatches reviewer
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-reviewer"
+
+    # Step 0: reviewer passes
+    ls = apply_review_verdict(ls, lc, verdict="pass")
+    assert ls.inner_phase == "critiquing"
+
+    # Step 0: critiquing -> dispatches critic
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-critic"
+
+    # Step 0: critic approves -> advance to step 1
+    ls = apply_critique_verdict(ls, lc, verdict="approved")
+    assert ls.current_step == 1
+    assert ls.inner_phase == "building"
+    assert ls.cycle == 0
+
+    # Step 1: building
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+
+    # Step 1: reviewer passes
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-reviewer"
+    ls = apply_review_verdict(ls, lc, verdict="pass")
+
+    # Step 1: critic approves -> all steps done -> e2e
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-critic"
+    ls = apply_critique_verdict(ls, lc, verdict="approved")
+    assert ls.inner_phase == "e2e_testing"
+
+    # e2e: dispatches builder for full test run
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+
+    # e2e passes -> done
+    ls = apply_e2e_verdict(ls, lc, verdict="pass")
+    assert ls.inner_phase == "done"
+    assert ls.flagged_steps == ()
+
+
+def test_full_loop_lifecycle_with_retries():
+    """Simulate loop with review failures and critic suggestions."""
+    lc = LoopConfig(
+        roles=("local-builder", "local-reviewer", "local-critic"),
+        max_cycles=3,
+        max_critic_rounds=2,
+    )
+    ls = LoopState(total_steps=1, inner_phase="building")
+
+    # Build attempt 1
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+
+    # Review fails
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-reviewer"
+    ls = apply_review_verdict(ls, lc, verdict="fail")
+    assert ls.cycle == 1
+    assert ls.inner_phase == "building"
+
+    # Build attempt 2
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+
+    # Review passes this time
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-reviewer"
+    ls = apply_review_verdict(ls, lc, verdict="pass")
+    assert ls.inner_phase == "critiquing"
+
+    # Critic has suggestions
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-critic"
+    ls = apply_critique_verdict(ls, lc, verdict="suggestions")
+    assert ls.critic_rounds == 1
+    assert ls.inner_phase == "building"
+
+    # Rebuild with suggestions
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+
+    # Review passes again
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-reviewer"
+    ls = apply_review_verdict(ls, lc, verdict="pass")
+
+    # Critic approves this time -> e2e (last step)
+    role, ls = resolve_loop_role(ls, lc)
+    assert role == "local-critic"
+    ls = apply_critique_verdict(ls, lc, verdict="approved")
+    assert ls.inner_phase == "e2e_testing"
+
+    # e2e passes
+    role, ls = resolve_loop_role(ls, lc)
+    ls = apply_e2e_verdict(ls, lc, verdict="pass")
+    assert ls.inner_phase == "done"

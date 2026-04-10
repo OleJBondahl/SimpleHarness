@@ -715,10 +715,84 @@ def pick_next_task(
 
 
 @deal.pure
+def find_current_phase_index(
+    phases: tuple[str | LoopConfig, ...], last_role: str | None
+) -> int | None:
+    """Find which phase index the task is currently in.
+
+    For loop phases, checks if last_role is one of the loop's roles.
+    Returns None if last_role not found in any phase.
+    """
+    if last_role is None:
+        return None
+    for i, phase in enumerate(phases):
+        if isinstance(phase, str) and phase == last_role:
+            return i
+        if isinstance(phase, LoopConfig) and last_role in phase.roles:
+            return i
+    return None
+
+
+@deal.pure
+def _find_loop_config_for_role(
+    phases: tuple[str | LoopConfig, ...], role_name: str | None
+) -> LoopConfig | None:
+    """Find the LoopConfig that contains the given role name."""
+    if role_name is None:
+        return None
+    for phase in phases:
+        if isinstance(phase, LoopConfig) and role_name in phase.roles:
+            return phase
+    return None
+
+
+@deal.pure
+def _first_role_of_phase(phase: str | LoopConfig) -> str | None:
+    """Return the first role name for a phase (string or LoopConfig)."""
+    if isinstance(phase, str):
+        return phase
+    if isinstance(phase, LoopConfig):
+        return phase.roles[0] if phase.roles else None
+    return None
+
+
+@deal.pure
+def _advance_past_index(
+    phases: tuple[str | LoopConfig, ...],
+    idx: int | None,
+) -> str | None:
+    """Return the first role of the phase after *idx*, or None if past the end."""
+    if idx is None:
+        return _first_role_of_phase(phases[0]) if phases else None
+    if idx + 1 >= len(phases):
+        return None
+    return _first_role_of_phase(phases[idx + 1])
+
+
+@deal.pure
+def _resolve_in_loop(
+    ls: LoopState,
+    phases: tuple[str | LoopConfig, ...],
+    last: str | None,
+) -> str | None:
+    """Resolve the next role when already inside a loop."""
+    if ls.inner_phase == "done":
+        idx = find_current_phase_index(phases, last)
+        return _advance_past_index(phases, idx)
+    lc = _find_loop_config_for_role(phases, last)
+    if lc is not None:
+        role, _new_ls = resolve_loop_role(ls, lc)
+        return role
+    return None
+
+
+@deal.pure
 def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
     """Hybrid: STATE.next_role wins if set, else advance along workflow.phases.
 
-    Returns None if the task is past its final phase (should be marked done).
+    For loop phases, delegates to resolve_loop_role when inside a loop,
+    or enters the loop when advancing to a loop phase.
+    Returns None if the task is past its final phase.
     """
     if task.state.status != "active":
         return None
@@ -727,20 +801,20 @@ def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
     phases = workflow.phases
     if not phases:
         return None
+
     last = task.state.last_role
+
+    if task.state.loop_state is not None:
+        return _resolve_in_loop(task.state.loop_state, phases, last)
+
     if last is None:
-        first = phases[0]
-        return first if isinstance(first, str) else None
-    try:
-        idx = phases.index(last)
-    except ValueError:
-        # last_role not in workflow — restart from beginning
-        first = phases[0]
-        return first if isinstance(first, str) else None
-    if idx + 1 >= len(phases):
-        return None  # past the final phase
-    nxt = phases[idx + 1]
-    return nxt if isinstance(nxt, str) else None
+        return _first_role_of_phase(phases[0])
+
+    idx = find_current_phase_index(phases, last)
+    if idx is None:
+        return _first_role_of_phase(phases[0])
+
+    return _advance_past_index(phases, idx)
 
 
 @deal.pure
@@ -1289,6 +1363,7 @@ class TickPlan:
     block_reason: str | None = None
     run_task_slug: str | None = None
     run_role_name: str | None = None
+    init_loop_state: LoopState | None = None  # set when entering a loop
 
 
 @deal.pure
@@ -1423,10 +1498,21 @@ def plan_tick(
     if block_plan is not None:
         return block_plan
 
+    # Check if we're entering a loop phase
+    init_ls = None
+    if task.state.loop_state is None:
+        for phase in workflow.phases:
+            if isinstance(phase, LoopConfig) and next_role_name in phase.roles:
+                # Entering a loop — signal that loop_state should be initialized
+                # total_steps will be set by shell.py after reading PLAN.md
+                init_ls = LoopState(total_steps=0, inner_phase="building")
+                break
+
     return TickPlan(
         kind="run",
         run_task_slug=task.slug,
         run_role_name=next_role_name,
+        init_loop_state=init_ls,
     )
 
 
