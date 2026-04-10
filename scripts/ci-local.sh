@@ -31,24 +31,13 @@ run_step "Prose linting" vale --minAlertLevel=error docs/ README.md
 
 if [[ "${1:-}" == "--mutate" ]]; then
     echo "=== Mutation testing (via WSL) ==="
-    wsl -d Ubuntu -- bash -c "
-        cd /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness
-        rm -rf .mutmut-cache .venv
-    "
-    if ! wsl -d Ubuntu -- bash -c "
-        source \$HOME/.local/bin/env
-        cd /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness
-        export UV_PROJECT_ENVIRONMENT=\$HOME/simpleharness-ci/.venv
-        uv run python -m mutmut run
-        if [ \$? -eq 0 ]; then
-            uv run python -m mutmut results
-        else
-            echo 'mutmut run failed — skipping results'
-            exit 1
-        fi
-    "; then
+    wsl -d Ubuntu -- bash -c "cd /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness; rm -rf .mutmut-cache .venv"
+    wsl -d Ubuntu -- bash /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness/scripts/mutmut-wsl.sh
+    if [ $? -ne 0 ]; then
         failures=$((failures + 1))
     fi
+    wsl -d Ubuntu -- bash -c "cd /mnt/c/Users/OleJohanBondahl/Documents/Github_OJ/SimpleHarness; rm -rf .venv"
+    uv sync --quiet
 fi
 
 if [ "$failures" -gt 0 ]; then
