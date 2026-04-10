@@ -88,7 +88,7 @@ if [[ "${HAS_CREDS}" != "yes" ]]; then
 [launch] Run this once to log in:
 
     cd "${TOOLBOX_PATH}"
-    docker compose run --rm --entrypoint claude simpleharness login
+    WORKSITE_PATH="${WORKSITE_PATH}" COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME}" docker compose run --rm --entrypoint claude simpleharness login
 
 [launch] Then re-run scripts/launch.sh.
 EOF
