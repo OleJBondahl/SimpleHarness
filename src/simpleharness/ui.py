@@ -11,8 +11,10 @@ def say(msg: str, *, style: str = "cyan") -> None:
 
 
 def warn(msg: str) -> None:
+    """Print a harness-prefixed warning message to the terminal."""
     console.print(rf"[yellow]\[harness WARNING][/] {msg}")
 
 
 def err(msg: str) -> None:
+    """Print a harness-prefixed error message to the terminal."""
     console.print(rf"[red]\[harness ERROR][/] {msg}")

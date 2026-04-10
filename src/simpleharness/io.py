@@ -13,8 +13,7 @@ import re
 import sys
 import time
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -40,12 +39,16 @@ from simpleharness.core import (
 )
 from simpleharness.process import pid_alive
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 # ────────────────────────────────────────────────────────────────────────────
 # YAML frontmatter + config file helpers (impure — file I/O)
 # ────────────────────────────────────────────────────────────────────────────
 
 
 def read_frontmatter_file(path: Path) -> tuple[dict[str, Any], str]:
+    """Read a file and parse its YAML frontmatter, returning (metadata, body)."""
     return parse_frontmatter(path.read_text(encoding="utf-8"))
 
 
@@ -143,13 +146,14 @@ def load_config(worksite: Path) -> Config:
 
 
 def load_role(name: str) -> Role:
+    """Load a role definition from the toolbox roles directory by name."""
     path = toolbox_root() / "roles" / f"{name}.md"
     if not path.exists():
         raise FileNotFoundError(f"role '{name}' not found at {path}")
     meta, body = read_frontmatter_file(path)
     skills = parse_skill_list(meta.get("skills"))
     provider = meta.get("provider")
-    if provider is not None and provider not in ("ollama",):
+    if provider is not None and provider != "ollama":
         raise ValueError(f"role '{name}': invalid provider {provider!r}; must be null or 'ollama'")
 
     return Role(
@@ -167,6 +171,7 @@ def load_role(name: str) -> Role:
 
 
 def load_subagent(name: str) -> Subagent:
+    """Load a subagent definition from the toolbox subagents directory by name."""
     path = toolbox_root() / "subagents" / f"{name}.md"
     if not path.exists():
         raise FileNotFoundError(f"subagent '{name}' not found at {path}")
@@ -192,12 +197,11 @@ def load_subagent(name: str) -> Subagent:
 
 
 def load_all_subagents() -> tuple[Subagent, ...]:
+    """Load all subagent definitions from the toolbox subagents directory."""
     subagents_dir = toolbox_root() / "subagents"
     if not subagents_dir.exists():
         return ()
-    out = []
-    for path in sorted(subagents_dir.glob("*.md")):
-        out.append(load_subagent(path.stem))
+    out = [load_subagent(path.stem) for path in sorted(subagents_dir.glob("*.md"))]
     return tuple(out)
 
 
@@ -296,8 +300,9 @@ _ALLOWLIST_HEADER = (
 
 
 def _append_approved_pattern_unlocked(worksite: Path, pattern: str) -> None:
-    """Append `pattern` to <worksite>/simpleharness/config.yaml without
-    taking any file lock. Callers MUST already hold an outer lock that
+    """Append `pattern` to <worksite>/simpleharness/config.yaml without taking any file lock.
+
+    Callers MUST already hold an outer lock that
     serializes concurrent writers of config.yaml (e.g. the shared
     ``.approver-refresh.lock`` held by ``persist_approver_allow``, or
     ``_FileLock(cfg_path)`` held by ``append_approved_pattern``).
@@ -339,10 +344,9 @@ def _append_approved_pattern_unlocked(worksite: Path, pattern: str) -> None:
 
 
 def append_approved_pattern(worksite: Path, pattern: str) -> None:
-    """Append `pattern` to <worksite>/simpleharness/config.yaml under
-    permissions.extra_bash_allow. Idempotent: no-op if already present.
+    """Append `pattern` to <worksite>/simpleharness/config.yaml under permissions.extra_bash_allow.
 
-    Guarded by a cross-platform file lock and written atomically via a
+    Idempotent: no-op if already present. Guarded by a cross-platform file lock and written atomically via a
     temp-file + os.replace. Thin public wrapper around
     ``_append_approved_pattern_unlocked`` — callers that need to hold
     an outer lock (e.g. to refresh the fast-path allowlist atomically)
@@ -446,6 +450,7 @@ def persist_approver_allow(
 
 
 def load_workflow(name: str) -> Workflow:
+    """Load a workflow definition from the toolbox workflows directory by name."""
     path = toolbox_root() / "workflows" / f"{name}.md"
     if not path.exists():
         raise FileNotFoundError(f"workflow '{name}' not found at {path}")
@@ -492,6 +497,7 @@ _STATE_FIELD_ORDER = [
 
 
 def read_state(path: Path) -> State:
+    """Read and deserialize a STATE.md file into a State dataclass."""
     meta, _body = read_frontmatter_file(path)
     return State(
         task_slug=str(meta.get("task_slug", "")),
@@ -517,6 +523,7 @@ def read_state(path: Path) -> State:
 
 
 def write_state(path: Path, state: State) -> None:
+    """Serialize a State dataclass and write it to a STATE.md file."""
     data: dict[str, Any] = {
         "task_slug": state.task_slug,
         "workflow": state.workflow,
@@ -551,6 +558,7 @@ def state_hash(path: Path) -> str:
 
 
 def now_iso() -> str:
+    """Return the current UTC time as an ISO 8601 string."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -560,6 +568,7 @@ def now_iso() -> str:
 
 
 def write_session_prompt_file(task: Task, prompt: str) -> Path:
+    """Write the session prompt to .session_prompt.md in the task folder."""
     path = task.folder / ".session_prompt.md"
     path.write_text(prompt, encoding="utf-8")
     return path

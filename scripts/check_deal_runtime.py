@@ -128,7 +128,10 @@ _APPROVER_ENV = ApproverEnv(
 # ── Test cases ────────────────────────────────────────────────────────────────
 
 
-from collections.abc import Callable  # noqa: E402
+from typing import TYPE_CHECKING  # noqa: E402
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _test_cases() -> list[tuple[str, Callable[..., object], tuple, dict]]:

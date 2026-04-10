@@ -39,7 +39,7 @@ def build_reminder_text(
     if not available and not must_use:
         return ""
 
-    display_role = role_name if role_name else "unknown"
+    display_role = role_name or "unknown"
     lines: list[str] = [
         f"Role: {display_role}",
         "",
@@ -60,8 +60,7 @@ def build_reminder_text(
     if must_use:
         lines.append("")
         lines.append("Skills you MUST invoke before declaring this task complete:")
-        for name in must_use:
-            lines.append(f"  - {name}")
+        lines.extend(f"  - {name}" for name in must_use)
         lines.append("")
         lines.append(
             "If you stop without invoking these, the Stop hook will block you and send you"
@@ -83,6 +82,7 @@ def build_session_start_payload(reminder: str) -> dict[str, Any]:
 
 
 def main() -> int:  # pragma: no cover - exercised via subprocess test
+    """Hook entry point that injects available skills into the session context."""
     role = os.environ.get("SIMPLEHARNESS_ROLE", "")
     available_raw = os.environ.get("SIMPLEHARNESS_AVAILABLE_SKILLS", "[]")
     must_use_raw = os.environ.get("SIMPLEHARNESS_MUST_USE_MAIN", "[]")

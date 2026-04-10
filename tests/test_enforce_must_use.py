@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from simpleharness.hooks.enforce_must_use import decide_enforcement, pick_required_list
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # decide_enforcement

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from simpleharness.core import Skill, SkillsConfig
 from simpleharness.io import load_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _write_config(path: Path, content: str) -> None:

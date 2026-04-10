@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from simpleharness.transcript import (
     check_required_invocations,
@@ -14,6 +13,9 @@ from simpleharness.transcript import (
     read_transcript_jsonl,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 # ── Factories ─────────────────────────────────────────────────────────────────
 
 
@@ -22,8 +24,7 @@ def _assistant_event(*tool_uses: dict[str, Any], extra_text: bool = False) -> di
     content: list[dict[str, Any]] = []
     if extra_text:
         content.append({"type": "text", "text": "some text"})
-    for tu in tool_uses:
-        content.append({"type": "tool_use", **tu})
+    content.extend({"type": "tool_use", **tu} for tu in tool_uses)
     return {"type": "assistant", "message": {"role": "assistant", "content": content}}
 
 

@@ -12,8 +12,7 @@ import shlex
 import subprocess
 from dataclasses import asdict
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -24,6 +23,9 @@ from simpleharness.benchmark_core import (
     compute_task_score,
 )
 from simpleharness.core import parse_frontmatter
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = logging.getLogger(__name__)
 

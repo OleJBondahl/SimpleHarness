@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from retry import Response, RetriesExhausted, RetryConfig, retry_request
+from retry import Response, RetriesExhaustedError, RetryConfig, retry_request
 
 
 def _make_fn(*status_codes: int) -> MagicMock:
@@ -57,12 +57,12 @@ def test_retries_on_retryable_status_then_succeeds():
 def test_exact_retry_count():
     """With max_retries=3, there should be 1 initial + 3 retries = 4 total calls.
 
-    The function should exhaust all retries and raise RetriesExhausted.
+    The function should exhaust all retries and raise RetriesExhaustedError.
     """
     fn = _make_fn(503, 503, 503, 503)
     config = RetryConfig(max_retries=3, backoff_factor=0)
 
-    with pytest.raises(RetriesExhausted):
+    with pytest.raises(RetriesExhaustedError):
         retry_request(fn, config)
 
     assert fn.call_count == 4, (

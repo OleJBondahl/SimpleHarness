@@ -55,7 +55,7 @@ from simpleharness.io import (
 # ────────────────────────────────────────────────────────────────────────────
 
 
-class ApproverTimeout(Exception):
+class ApproverTimeoutError(Exception):
     """Raised when the spawned ``claude -p`` child exceeds its wall-clock deadline."""
 
 
@@ -119,8 +119,10 @@ def _load_env() -> ApproverEnv | str:
 
 
 def _read_stream_tail(log_path: Path | None, n_lines: int = 30) -> str:
-    """Return the last ``n_lines`` assistant-text lines from the working
-    agent's .jsonl stream log. Defensive on all I/O failures."""
+    """Return the last ``n_lines`` assistant-text lines from the working agent's .jsonl stream log.
+
+    Defensive on all I/O failures.
+    """
     if not log_path:
         return "(no stream context available)"
     try:
@@ -171,8 +173,10 @@ def _spawn_pipe_reader(stream: Any, out_queue: queue.Queue[Any]) -> threading.Th
 
 
 def _spawn_stderr_drain(stream: Any, tail: list[str], cap: int = 100) -> threading.Thread:
-    """Drain stderr into a bounded list on a daemon thread — prevents
-    pipe deadlock from a chatty child on Windows' ~64KB pipe buffer."""
+    """Drain stderr into a bounded list on a daemon thread.
+
+    Prevents pipe deadlock from a chatty child on Windows' ~64KB pipe buffer.
+    """
 
     def _reader() -> None:
         try:
@@ -250,7 +254,9 @@ def _spawn_approver(
         _stderr("claude CLI not found on PATH")
         raise
 
-    assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+    assert proc.stderr is not None
 
     stdout_q: queue.Queue[Any] = queue.Queue()
     stderr_tail: list[str] = []
@@ -318,7 +324,7 @@ def _spawn_approver(
 
     if timed_out:
         _stderr(f"approver timed out after {timeout_s:g}s; stderr tail: {err_tail[-400:]}")
-        raise ApproverTimeout(f"approver timed out after {timeout_s:g}s")
+        raise ApproverTimeoutError(f"approver timed out after {timeout_s:g}s")
 
     if proc.returncode != 0:
         _stderr(f"approver exited with code {proc.returncode}; stderr tail: {err_tail[-400:]}")
@@ -425,7 +431,7 @@ def _review(env: ApproverEnv, tool_name: str, tool_input: dict[str, Any]) -> Ver
             )
         except FileNotFoundError:
             return _deny_synthetic("approver could not be spawned: 'claude' not on PATH")
-        except ApproverTimeout:
+        except ApproverTimeoutError:
             reason = f"approver timed out after {env.timeout_s:g}s"
             _stderr(reason)
             if cfg.permissions.escalate_denials_to_correction:

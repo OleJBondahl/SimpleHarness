@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True)
@@ -24,7 +27,7 @@ class RetryConfig:
     retry_on_status_codes: tuple[int, ...] = field(default_factory=lambda: (500, 502, 503, 504))
 
 
-class RetriesExhausted(Exception):
+class RetriesExhaustedError(Exception):
     """Raised when all retry attempts have been exhausted."""
 
     def __init__(self, last_response: Response, attempts: int) -> None:
@@ -53,15 +56,15 @@ def retry_request(fn: Callable[[], Response], config: RetryConfig) -> Response:
     config:
         Retry configuration controlling attempts, backoff, and retryable codes.
 
-    Returns
+    Returns:
     -------
     Response
         The first successful response, or the last response if retries are
         exhausted.
 
-    Raises
+    Raises:
     ------
-    RetriesExhausted
+    RetriesExhaustedError
         When all attempts (initial + retries) fail with retryable status codes.
     """
     response = fn()
@@ -79,4 +82,4 @@ def retry_request(fn: Callable[[], Response], config: RetryConfig) -> Response:
         if response.status_code not in config.retry_on_status_codes:
             return response
 
-    raise RetriesExhausted(last_response=response, attempts=config.max_retries)
+    raise RetriesExhaustedError(last_response=response, attempts=config.max_retries)

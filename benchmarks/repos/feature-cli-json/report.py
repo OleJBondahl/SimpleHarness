@@ -41,12 +41,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.fmt == "text":
-        output = format_text(ITEMS)
+        format_text(ITEMS)
     else:
         parser.error(f"Unknown format: {args.fmt}")
         return  # unreachable, but keeps type checkers happy
-
-    print(output)
 
 
 if __name__ == "__main__":

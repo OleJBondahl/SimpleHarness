@@ -9,8 +9,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import replace
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.panel import Panel
 from rich.text import Text
@@ -43,6 +42,9 @@ from simpleharness.io import (
 )
 from simpleharness.ui import console, say, warn
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def _popen_kwargs_windows() -> dict[str, Any]:
     """Windows-specific: CREATE_NEW_PROCESS_GROUP so Ctrl+C stays in the parent."""
@@ -57,6 +59,7 @@ def spawn_claude(
     *,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen[str]:
+    """Spawn a Claude Code subprocess and return the Popen handle."""
     env: dict[str, str] | None = None
     if extra_env:
         env = os.environ.copy()
@@ -269,6 +272,7 @@ def read_stdin_until_blank() -> list[str]:
 
 
 def write_correction_md(task: Task, lines: list[str]) -> Path:
+    """Write a CORRECTION.md file to the task folder and return its path."""
     path = task.folder / "CORRECTION.md"
     body = "\n".join(lines).strip()
     path.write_text(body + "\n", encoding="utf-8")

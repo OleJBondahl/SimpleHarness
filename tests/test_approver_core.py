@@ -361,7 +361,7 @@ def test_finalize_outcome_is_frozen():
     )
 
     def attempt_mutation() -> None:
-        cast(Any, outcome).should_escalate = True
+        cast("Any", outcome).should_escalate = True
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         attempt_mutation()
@@ -374,7 +374,7 @@ def test_command_signature_non_str_input():
     # non-str input falls back to "Bash"
     from typing import cast as _cast
 
-    result = command_signature(_cast(str, 42))
+    result = command_signature(_cast("str", 42))
     assert result == "Bash"
 
 

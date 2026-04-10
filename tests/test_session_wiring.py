@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from simpleharness.core import (
     Config,
@@ -21,6 +21,9 @@ from simpleharness.core import (
     build_subagent_export_body,
     build_subagent_export_frontmatter,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

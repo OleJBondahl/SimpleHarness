@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import deal
 import yaml
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 # ────────────────────────────────────────────────────────────────────────────
 # Dataclasses: Permissions, Config, Role
@@ -62,6 +64,8 @@ DEFAULT_BASH_ALLOW: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class Permissions:
+    """Tool permission settings for a harness session."""
+
     mode: str = "safe"
     approver_model: str = "sonnet"
     escalate_denials_to_correction: bool = False
@@ -71,12 +75,16 @@ class Permissions:
 
 @dataclass(frozen=True)
 class Skill:
+    """A named skill with an optional usage hint."""
+
     name: str
     hint: str = ""
 
 
 @dataclass(frozen=True)
 class SkillList:
+    """Available and required skills for a role or subagent."""
+
     available: tuple[Skill, ...] = field(default_factory=tuple)
     must_use: tuple[str, ...] = field(default_factory=tuple)
     exclude_default_must_use: tuple[str, ...] = field(default_factory=tuple)
@@ -104,12 +112,16 @@ class SkillsConfig:
 
 @dataclass(frozen=True)
 class OllamaConfig:
+    """Connection settings for a local Ollama instance."""
+
     base_url: str = "http://localhost:11434"
     default_model: str = "qwen3.5"
 
 
 @dataclass(frozen=True)
 class Config:
+    """Top-level harness configuration loaded from config.yml."""
+
     model: str = "opus"
     idle_sleep_seconds: int = 30
     max_sessions_per_task: int = 20
@@ -124,6 +136,8 @@ class Config:
 
 @dataclass(frozen=True)
 class Role:
+    """A named agent role with its system prompt and metadata."""
+
     name: str
     body: str  # the system prompt body (frontmatter stripped)
     description: str = ""
@@ -138,6 +152,8 @@ class Role:
 
 @dataclass(frozen=True)
 class Subagent:
+    """A named subagent definition with its system prompt and tool list."""
+
     name: str
     body: str
     description: str = ""
@@ -299,6 +315,8 @@ def merge_skill_lists(role_skills: SkillList, default_skills: SkillList) -> Skil
 
 @dataclass(frozen=True)
 class Workflow:
+    """A named workflow with an ordered list of phase names."""
+
     name: str
     phases: tuple[str, ...]
     max_sessions: int | None = None
@@ -309,6 +327,8 @@ class Workflow:
 
 @dataclass(frozen=True)
 class State:
+    """Persisted task lifecycle state written to STATE.md."""
+
     # identity
     task_slug: str
     workflow: str
@@ -339,6 +359,8 @@ class State:
 
 @dataclass(frozen=True)
 class Task:
+    """A discovered task with its folder paths and current state."""
+
     slug: str
     folder: Path
     task_md: Path
@@ -349,6 +371,8 @@ class Task:
 
 @dataclass(frozen=True)
 class SessionResult:
+    """Outcome of a single Claude Code session."""
+
     completed: bool  # true if claude exited naturally
     interrupted: bool  # true if user Ctrl+C'd
     session_id: str | None
@@ -377,6 +401,8 @@ class ClassifyResult:
 
 @dataclass(frozen=True)
 class Deliverable:
+    """A required output file declared in a task spec."""
+
     path: str
     description: str = ""
     min_lines: int | None = None
@@ -384,6 +410,8 @@ class Deliverable:
 
 @dataclass(frozen=True)
 class TaskSpec:
+    """Parsed task specification from TASK.md frontmatter."""
+
     title: str
     workflow: str
     depends_on: tuple[str, ...] = field(default_factory=tuple)
@@ -394,6 +422,8 @@ class TaskSpec:
 
 @dataclass(frozen=True)
 class DownstreamAction:
+    """An action to apply to a downstream task when an upstream task completes."""
+
     task_slug: str
     action: Literal["leave_active", "block_for_rebrief"]
     upstream_deliverables: tuple[Deliverable, ...]
@@ -418,6 +448,7 @@ DEFAULT_TOOLS_ALLOW: tuple[str, ...] = (
 
 @deal.pure
 def worksite_sh_dir(worksite: Path) -> Path:
+    """Return the simpleharness config subdirectory inside a worksite."""
     return worksite / "simpleharness"
 
 
@@ -545,12 +576,12 @@ def check_deliverables(
     *line_counts* — optional mapping of path → line count for min_lines checks.
     """
     counts = line_counts or {}
-    missing: list[str] = []
-    for d in spec.deliverables:
-        if d.path not in existing_paths or (
-            d.min_lines is not None and counts.get(d.path, 0) < d.min_lines
-        ):
-            missing.append(d.path)
+    missing = [
+        d.path
+        for d in spec.deliverables
+        if d.path not in existing_paths
+        or (d.min_lines is not None and counts.get(d.path, 0) < d.min_lines)
+    ]
     return tuple(missing)
 
 
@@ -904,8 +935,7 @@ def build_subagent_export_body(subagent: Subagent) -> str:
     lines: list[str] = ["## Skill Requirements", ""]
     if subagent.skills.must_use:
         lines.append("You MUST invoke these skills before finishing:")
-        for name in subagent.skills.must_use:
-            lines.append(f"- {name}")
+        lines.extend(f"- {name}" for name in subagent.skills.must_use)
         lines.append("")
     if subagent.skills.available:
         lines.append("Available skills (invoke via the Skill tool):")
@@ -1058,6 +1088,8 @@ def _slugify(text: str) -> str:
 
 @dataclass(frozen=True)
 class TickPlan:
+    """Decision produced by plan_tick describing what the watch loop should do next."""
+
     kind: Literal["no_tasks", "no_active", "waiting_on_deps", "all_backoff", "block", "run"]
     block_task_slug: str | None = None
     block_reason: str | None = None
@@ -1334,7 +1366,7 @@ def classify_cli_error(exit_code: int | None, error_text: str) -> ClassifyResult
 
     # unknown → fatal (loud stop, not silent retry)
     last_line = error_text.strip().splitlines()[-1] if error_text.strip() else ""
-    reason = last_line if last_line else f"exit code {exit_code}"
+    reason = last_line or f"exit code {exit_code}"
     return ClassifyResult("fatal", reason)
 
 

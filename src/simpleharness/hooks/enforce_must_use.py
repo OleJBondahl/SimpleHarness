@@ -85,6 +85,7 @@ def pick_required_list(
 
 
 def main() -> int:  # pragma: no cover
+    """Hook entry point that enforces must-use skill compliance at session stop."""
     enforcement = os.environ.get("SIMPLEHARNESS_ENFORCEMENT", "strict")
     if enforcement == "off":
         return 0

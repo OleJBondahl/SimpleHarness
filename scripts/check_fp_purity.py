@@ -114,14 +114,13 @@ def check_file(path: Path) -> list[str]:
                     f"{path}:{node.lineno}: dataclass `{node.name}` must use frozen=True"
                 )
             if not is_dc:
-                for sub in node.body:
-                    if isinstance(
-                        sub, (ast.FunctionDef, ast.AsyncFunctionDef)
-                    ) and not _has_deal_decorator(sub.decorator_list):
-                        violations.append(
-                            f"{path}:{sub.lineno}: method "
-                            f"`{node.name}.{sub.name}` missing @deal.pure/@deal.has()"
-                        )
+                violations.extend(
+                    f"{path}:{sub.lineno}: method "
+                    f"`{node.name}.{sub.name}` missing @deal.pure/@deal.has()"
+                    for sub in node.body
+                    if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not _has_deal_decorator(sub.decorator_list)
+                )
     return violations
 
 

@@ -11,6 +11,7 @@ See README.md and the design plan for full architecture notes.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -417,6 +418,7 @@ def _next_task_index(tasks_dir: Path) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
+    """Initialize a new worksite directory with required config files."""
     worksite = worksite_root(args)
     sh = worksite_sh_dir(worksite)
     for sub in ("tasks", "memory", "logs"):
@@ -442,6 +444,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_new(args: argparse.Namespace) -> int:
+    """Create a new task folder with a stub TASK.md."""
     worksite = worksite_root(args)
     sh = worksite_sh_dir(worksite)
     if not sh.exists():
@@ -517,12 +520,10 @@ def _start_ollama() -> subprocess.Popen[bytes] | None:
     # Check if already running
     import urllib.request
 
-    try:
+    with contextlib.suppress(Exception):
         urllib.request.urlopen("http://localhost:11434/", timeout=2)
         say("ollama already running at localhost:11434")
         return None
-    except Exception:
-        pass
     say("starting ollama serve …")
     proc = subprocess.Popen(
         [ollama_bin, "serve"],
@@ -535,6 +536,7 @@ def _start_ollama() -> subprocess.Popen[bytes] | None:
 
 
 def cmd_watch(args: argparse.Namespace) -> int:
+    """Run the harness watch loop, dispatching tasks to Claude sessions."""
     worksite = worksite_root(args)
     config = load_config(worksite)
     if not worksite_sh_dir(worksite).exists():
@@ -574,6 +576,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    """Display a summary table of all tasks and their current status."""
     from rich.table import Table
 
     worksite = worksite_root(args)
@@ -592,11 +595,9 @@ def cmd_status(args: argparse.Namespace) -> int:
 
     for t in tasks:
         workflow_phases: tuple[str, ...] = ()
-        try:
+        with contextlib.suppress(Exception):
             wf = load_workflow(t.state.workflow)
             workflow_phases = wf.phases
-        except Exception:
-            pass
 
         dash = format_task_dashboard(t.state, workflow_phases)
 
@@ -628,10 +629,12 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
+    """Alias for cmd_status — list all tasks."""
     return cmd_status(args)
 
 
 def cmd_show(args: argparse.Namespace) -> int:
+    """Print detailed state and spec for a single task."""
     worksite = worksite_root(args)
     tasks = {t.slug: t for t in discover_tasks(worksite)}
     t = tasks.get(args.slug)
@@ -683,6 +686,7 @@ def cmd_unblock(args: argparse.Namespace) -> int:
 
 
 def cmd_pause(args: argparse.Namespace) -> int:
+    """Pause the watch loop by writing a pause sentinel file."""
     worksite = worksite_root(args)
     pf = pause_file_path(worksite)
     if pf.exists():
@@ -694,6 +698,7 @@ def cmd_pause(args: argparse.Namespace) -> int:
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
+    """Resume the watch loop by removing the pause sentinel file."""
     worksite = worksite_root(args)
     pf = pause_file_path(worksite)
     if not pf.exists():
@@ -705,6 +710,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_benchmark_run(args: argparse.Namespace) -> int:
+    """Run benchmark tasks from a benchmarks directory."""
     benchmarks_dir = Path(args.benchmarks_dir).resolve()
     if not benchmarks_dir.exists():
         err(f"benchmarks directory not found: {benchmarks_dir}")
@@ -729,6 +735,7 @@ def cmd_benchmark_run(args: argparse.Namespace) -> int:
 
 
 def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
+    """Analyze benchmark results (stub — not yet fully integrated)."""
     # For now, just a stub that prints guidance
     say("Benchmark analysis not yet integrated with harness sessions.", style="yellow")
     say("To analyze manually, review the latest results in benchmarks/results/")
@@ -737,6 +744,7 @@ def cmd_benchmark_analyze(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
+    """Run environment health checks and report any issues."""
     worksite = worksite_root(args)
     config = load_config(worksite)
     ok = True
@@ -914,6 +922,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def build_argparser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser for simpleharness."""
     p = argparse.ArgumentParser(
         prog="simpleharness",
         description="Lightweight baton-pass agent harness over the Claude Code CLI",
@@ -1006,6 +1015,7 @@ def build_argparser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI entry point for simpleharness."""
     parser = build_argparser()
     args = parser.parse_args()
     if not getattr(args, "command", None):

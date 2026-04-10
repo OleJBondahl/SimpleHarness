@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from simpleharness.core import Skill, SkillList
 from simpleharness.io import load_all_subagents, load_role, load_subagent
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _write_md(path: Path, frontmatter: str, body: str = "Role body.") -> None:

@@ -50,6 +50,8 @@ _POSIX_SHELL = os.name != "nt"
 
 @dataclasses.dataclass(frozen=True)
 class ApproverEnv:
+    """Runtime environment context for the approver hook."""
+
     worksite: Path
     task_slug: str
     role: str
@@ -61,6 +63,8 @@ class ApproverEnv:
 
 @dataclasses.dataclass(frozen=True)
 class Verdict:
+    """Approver decision with the matched pattern and reason."""
+
     decision: str  # "allow" | "deny"
     pattern: str  # "" on deny
     reason: str

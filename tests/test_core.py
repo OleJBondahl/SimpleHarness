@@ -153,25 +153,25 @@ _FAR_PAST = datetime(2000, 1, 1, tzinfo=UTC)
 def test_state_is_frozen():
     s = _state()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, s).status = "blocked"
+        cast("Any", s).status = "blocked"
 
 
 def test_workflow_is_frozen():
     w = _workflow()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, w).name = "other"
+        cast("Any", w).name = "other"
 
 
 def test_task_is_frozen():
     t = _task()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, t).slug = "other"
+        cast("Any", t).slug = "other"
 
 
 def test_session_result_is_frozen():
     sr = _session()
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, sr).completed = False
+        cast("Any", sr).completed = False
 
 
 # ── plan_tick: no_tasks ───────────────────────────────────────────────────────
@@ -405,7 +405,7 @@ def test_compute_post_session_output_is_frozen():
         state, "developer", _session(), None, 0, "pre", "post", _config(), _NOW
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, new).status = "done"
+        cast("Any", new).status = "done"
 
 
 def test_compute_post_session_state_accumulates_cost():
@@ -830,13 +830,13 @@ def test_toolbox_root_returns_path():
 def test_deliverable_is_frozen():
     d = Deliverable(path="out.md", description="report")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, d).path = "other.md"
+        cast("Any", d).path = "other.md"
 
 
 def test_task_spec_is_frozen():
     ts = TaskSpec(title="t", workflow="universal")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, ts).title = "other"
+        cast("Any", ts).title = "other"
 
 
 def test_downstream_action_is_frozen():
@@ -846,7 +846,7 @@ def test_downstream_action_is_frozen():
         upstream_deliverables=(),
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
-        cast(Any, da).action = "block_for_rebrief"
+        cast("Any", da).action = "block_for_rebrief"
 
 
 def test_task_spec_defaults():

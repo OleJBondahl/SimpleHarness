@@ -7,10 +7,12 @@ functions over the returned tuple of event dicts.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import deal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @deal.has("io")
