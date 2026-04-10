@@ -435,6 +435,8 @@ class State:
     # retry / backoff (harness-managed)
     retry_count: int = 0
     retry_after: str | None = None  # ISO 8601 timestamp
+    # loop phase tracking (harness-managed)
+    loop_state: LoopState | None = None
 
 
 @dataclass(frozen=True)
@@ -837,6 +839,17 @@ def apply_e2e_verdict(loop_state: LoopState, loop_config: LoopConfig, *, verdict
         return replace(loop_state, inner_phase="done")
     # fail — re-enter building
     return replace(loop_state, inner_phase="building", cycle=0, critic_rounds=0)
+
+
+@deal.pure
+def parse_verdict(text: str) -> str:
+    """Extract verdict from a REVIEW.md or CRITIQUE.md file.
+
+    Expected format: YAML frontmatter with a ``verdict`` field.
+    Returns the verdict string, or "fail" if not found.
+    """
+    meta, _body = parse_frontmatter(text)
+    return str(meta.get("verdict", "fail"))
 
 
 @deal.pure

@@ -44,6 +44,7 @@ from simpleharness.core import (
     format_task_dashboard,
     parse_frontmatter,
     parse_task_spec,
+    parse_verdict,
     parse_workflow_phases,
     pause_file_path,
     pick_next_task,
@@ -73,6 +74,7 @@ def _state(
     total_cost_usd: float = 0.0,
     retry_count: int = 0,
     retry_after: str | None = None,
+    loop_state: LoopState | None = None,
 ) -> State:
     return State(
         task_slug=slug,
@@ -94,6 +96,7 @@ def _state(
         total_cost_usd=total_cost_usd,
         retry_count=retry_count,
         retry_after=retry_after,
+        loop_state=loop_state,
     )
 
 
@@ -1937,3 +1940,89 @@ def test_parse_workflow_phases_with_loop():
 def test_parse_workflow_phases_invalid():
     with pytest.raises(ValueError, match="invalid phase entry"):
         parse_workflow_phases((42,))
+
+
+# ── parse_verdict ────────────────────────────────────────────────────────────
+
+
+def test_parse_verdict_pass():
+    text = "---\nverdict: pass\n---\nAll tests passed.\n"
+    assert parse_verdict(text) == "pass"
+
+
+def test_parse_verdict_fail():
+    text = "---\nverdict: fail\n---\ntest_retry_count failed.\n"
+    assert parse_verdict(text) == "fail"
+
+
+def test_parse_verdict_approved():
+    text = "---\nverdict: approved\n---\nCode meets quality wishlist.\n"
+    assert parse_verdict(text) == "approved"
+
+
+def test_parse_verdict_suggestions():
+    text = "---\nverdict: suggestions\n---\nConsider using frozen dataclass.\n"
+    assert parse_verdict(text) == "suggestions"
+
+
+def test_parse_verdict_missing_defaults_to_fail():
+    text = "No frontmatter at all, just text.\n"
+    assert parse_verdict(text) == "fail"
+
+
+def test_parse_verdict_empty_defaults_to_fail():
+    text = "---\n---\nEmpty frontmatter.\n"
+    assert parse_verdict(text) == "fail"
+
+
+# ── loop_state field tests ───────────────────────────────────────────────────
+
+
+def test_state_with_loop_state():
+    ls = LoopState(current_step=1, total_steps=3, cycle=2, inner_phase="reviewing")
+    s = _state(loop_state=ls)
+    assert s.loop_state is not None
+    assert s.loop_state.current_step == 1
+
+
+def test_state_loop_state_default_none():
+    s = _state()
+    assert s.loop_state is None
+
+
+def test_state_loop_state_round_trip(tmp_path: Path):
+    from simpleharness.io import read_state, write_state
+
+    ls = LoopState(
+        current_step=1,
+        total_steps=3,
+        cycle=2,
+        critic_rounds=1,
+        inner_phase="critiquing",
+        flagged_steps=(0,),
+        last_inner_role="local-reviewer",
+    )
+    s = _state(loop_state=ls)
+
+    state_file = tmp_path / "STATE.md"
+    write_state(state_file, s)
+    loaded = read_state(state_file)
+
+    assert loaded.loop_state is not None
+    assert loaded.loop_state.current_step == 1
+    assert loaded.loop_state.total_steps == 3
+    assert loaded.loop_state.cycle == 2
+    assert loaded.loop_state.critic_rounds == 1
+    assert loaded.loop_state.inner_phase == "critiquing"
+    assert loaded.loop_state.flagged_steps == (0,)
+    assert loaded.loop_state.last_inner_role == "local-reviewer"
+
+
+def test_state_no_loop_state_round_trip(tmp_path: Path):
+    from simpleharness.io import read_state, write_state
+
+    s = _state()
+    state_file = tmp_path / "STATE.md"
+    write_state(state_file, s)
+    loaded = read_state(state_file)
+    assert loaded.loop_state is None

@@ -23,6 +23,7 @@ from simpleharness.core import (
     _VALID_SKILL_ENFORCEMENT,
     DEFAULT_BASH_ALLOW,
     Config,
+    LoopState,
     OllamaConfig,
     Permissions,
     Role,
@@ -495,7 +496,23 @@ _STATE_FIELD_ORDER = [
     "consecutive_same_role",
     "retry_count",
     "retry_after",
+    "loop_state",
 ]
+
+
+def _parse_loop_state(loop_raw: Any) -> LoopState | None:
+    """Deserialize a loop_state dict into a LoopState, or None."""
+    if not isinstance(loop_raw, dict):
+        return None
+    return LoopState(
+        current_step=int(loop_raw.get("current_step", 0)),
+        total_steps=int(loop_raw.get("total_steps", 0)),
+        cycle=int(loop_raw.get("cycle", 0)),
+        critic_rounds=int(loop_raw.get("critic_rounds", 0)),
+        last_inner_role=loop_raw.get("last_inner_role") or None,
+        flagged_steps=tuple(loop_raw.get("flagged_steps", ())),
+        inner_phase=str(loop_raw.get("inner_phase", "building")),
+    )
 
 
 def read_state(path: Path) -> State:
@@ -521,6 +538,7 @@ def read_state(path: Path) -> State:
         consecutive_same_role=int(meta.get("consecutive_same_role", 0) or 0),
         retry_count=int(meta.get("retry_count", 0) or 0),
         retry_after=meta.get("retry_after") or None,
+        loop_state=_parse_loop_state(meta.get("loop_state")),
     )
 
 
@@ -547,6 +565,17 @@ def write_state(path: Path, state: State) -> None:
         "retry_count": state.retry_count,
         "retry_after": state.retry_after,
     }
+    if state.loop_state is not None:
+        ls = state.loop_state
+        data["loop_state"] = {
+            "current_step": ls.current_step,
+            "total_steps": ls.total_steps,
+            "cycle": ls.cycle,
+            "critic_rounds": ls.critic_rounds,
+            "last_inner_role": ls.last_inner_role,
+            "flagged_steps": list(ls.flagged_steps),
+            "inner_phase": ls.inner_phase,
+        }
     ordered = {k: data[k] for k in _STATE_FIELD_ORDER if k in data}
     yaml_body = yaml.safe_dump(
         ordered, sort_keys=False, default_flow_style=False, allow_unicode=True
