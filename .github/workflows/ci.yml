@@ -36,3 +36,9 @@ jobs:
 
       - name: Tests
         run: uv run pytest
+
+      - name: Core coverage (90% minimum)
+        run: uv run pytest --override-ini="addopts=-ra --strict-markers" --cov --cov-config=core-coverage.ini -q --no-header
+
+      - name: Prose linting
+        run: vale --minAlertLevel=error docs/ README.md
