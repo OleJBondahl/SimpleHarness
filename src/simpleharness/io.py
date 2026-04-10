@@ -24,6 +24,7 @@ from simpleharness.core import (
     _VALID_SKILL_ENFORCEMENT,
     DEFAULT_BASH_ALLOW,
     Config,
+    OllamaConfig,
     Permissions,
     Role,
     SkillsConfig,
@@ -121,6 +122,12 @@ def load_config(worksite: Path) -> Config:
         enforcement=enforcement,
     )
 
+    ollama_raw = merged.get("ollama", {}) or {}
+    ollama_cfg = OllamaConfig(
+        base_url=str(ollama_raw.get("base_url", "http://localhost:11434")),
+        default_model=str(ollama_raw.get("default_model", "qwen3.5")),
+    )
+
     return Config(
         model=str(merged.get("model", "opus")),
         idle_sleep_seconds=int(merged.get("idle_sleep_seconds", 30)),
@@ -131,6 +138,7 @@ def load_config(worksite: Path) -> Config:
         include_partial_messages=bool(merged.get("include_partial_messages", True)),
         permissions=perms,
         skills=skills_cfg,
+        ollama=ollama_cfg,
     )
 
 
@@ -140,11 +148,16 @@ def load_role(name: str) -> Role:
         raise FileNotFoundError(f"role '{name}' not found at {path}")
     meta, body = read_frontmatter_file(path)
     skills = parse_skill_list(meta.get("skills"))
+    provider = meta.get("provider")
+    if provider is not None and provider not in ("ollama",):
+        raise ValueError(f"role '{name}': invalid provider {provider!r}; must be null or 'ollama'")
+
     return Role(
         name=str(meta.get("name", name)),
         body=body.strip(),
         description=str(meta.get("description", "")),
         model=meta.get("model"),
+        provider=provider,
         max_turns=meta.get("max_turns"),
         allowed_tools=tuple(meta.get("allowed_tools", []) or []),
         privileged=bool(meta.get("privileged", False)),
@@ -609,16 +622,34 @@ def _write_approver_settings(task_dir: Path, enforcement_mode: str = "off") -> P
     return out_path
 
 
-def _write_session_settings(task_dir: Path, enforcement_mode: str) -> Path | None:
+def _write_session_settings(
+    task_dir: Path,
+    enforcement_mode: str,
+    *,
+    is_local: bool = False,
+) -> Path | None:
     """Write .session-settings.json with skill hooks for non-approver modes.
 
+    When ``is_local`` is True, also strips plugins and MCP servers down to
+    a minimal set to conserve the limited context window of local models.
+
     Returns the path to the written file, or None if enforcement is 'off'
-    (nothing to register).
+    and not local (nothing to register).
     """
-    if enforcement_mode == "off":
+    if enforcement_mode == "off" and not is_local:
         return None
-    hooks = build_session_hooks_config(enforcement_mode, sys.executable)
-    settings = {"hooks": hooks}
+
+    settings: dict[str, Any] = {}
+
+    if enforcement_mode != "off":
+        hooks = build_session_hooks_config(enforcement_mode, sys.executable)
+        settings["hooks"] = hooks
+
+    if is_local:
+        settings["enabledPlugins"] = {
+            "commit-commands@claude-plugins-official": True,
+        }
+
     out_path = task_dir / ".session-settings.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:

@@ -65,6 +65,15 @@ permissions:
   # e.g. ["WebFetch", "WebSearch"]
   extra_tools_allow: []
 
+# ---- Ollama (local model) ----
+# When a role sets `provider: ollama` in its frontmatter, the harness spawns
+# claude with ANTHROPIC_BASE_URL pointed at a local Ollama server. This lets
+# simple/mechanical tasks run on a free local model instead of using
+# subscription quota.
+ollama:
+  base_url: "http://localhost:11434"
+  default_model: "qwen3.5-nothink"
+
 # ---- Skills enforcement ----
 # Every loaded role gets these as defaults, merged into its own skills
 # frontmatter via merge_skill_lists. Roles can opt out of a specific

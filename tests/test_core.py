@@ -15,7 +15,9 @@ from simpleharness.core import (
     Config,
     Deliverable,
     DownstreamAction,
+    OllamaConfig,
     Permissions,
+    Role,
     SessionResult,
     State,
     Task,
@@ -27,6 +29,7 @@ from simpleharness.core import (
     build_claude_cmd,
     build_rebrief_text,
     build_refinement_text,
+    build_session_env,
     build_session_prompt,
     check_deliverables,
     classify_cli_error,
@@ -1623,3 +1626,110 @@ def test_classify_fatal_generic_timeout():
     """Generic 'timeout' in non-network context should be fatal, not transient."""
     r = classify_cli_error(1, "Function execution timeout exceeded")
     assert r.outcome == "fatal"
+
+
+# ── Ollama integration tests ─────────────────────────────────────────────────
+
+
+def test_build_claude_cmd_includes_model_from_role():
+    """When role.model is set, --model flag appears in the command."""
+    role = Role(name="local-worker", body="worker", model="qwen2.5-coder:7b")
+    cfg = Config()
+    cmd = build_claude_cmd(
+        Path("/task/.session_prompt.md"),
+        role,
+        Path("/toolbox"),
+        "sess-ollama",
+        cfg,
+    )
+    assert "--model" in cmd
+    idx = cmd.index("--model")
+    assert cmd[idx + 1] == "qwen2.5-coder:7b"
+
+
+def test_build_claude_cmd_includes_model_from_config_default():
+    """When role.model is None, --model uses config.model."""
+    role = Role(name="developer", body="dev")
+    cfg = Config(model="opus")
+    cmd = build_claude_cmd(
+        Path("/task/.session_prompt.md"),
+        role,
+        Path("/toolbox"),
+        "sess-default",
+        cfg,
+    )
+    assert "--model" in cmd
+    idx = cmd.index("--model")
+    assert cmd[idx + 1] == "opus"
+
+
+def test_build_session_env_ollama_provider_injects_env_vars():
+    """When role.provider is 'ollama', Ollama env vars are injected."""
+    role = Role(name="local-worker", body="worker", provider="ollama")
+    cfg = Config(ollama=OllamaConfig(base_url="http://localhost:11434"))
+    env = build_session_env({}, role, (), cfg)
+    assert env["ANTHROPIC_BASE_URL"] == "http://localhost:11434"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "ollama"
+    assert env["ANTHROPIC_API_KEY"] == ""
+
+
+def test_build_session_env_no_provider_no_ollama_vars():
+    """When role.provider is None, no Ollama env vars are injected."""
+    role = Role(name="developer", body="dev")
+    cfg = Config()
+    env = build_session_env({}, role, (), cfg)
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+
+
+def test_build_session_env_ollama_custom_base_url():
+    """Custom ollama.base_url is passed through to env."""
+    role = Role(name="local-worker", body="worker", provider="ollama")
+    cfg = Config(ollama=OllamaConfig(base_url="http://192.168.1.50:11434"))
+    env = build_session_env({}, role, (), cfg)
+    assert env["ANTHROPIC_BASE_URL"] == "http://192.168.1.50:11434"
+
+
+def test_ollama_config_defaults():
+    """OllamaConfig has sensible defaults."""
+    cfg = OllamaConfig()
+    assert cfg.base_url == "http://localhost:11434"
+    assert cfg.default_model == "qwen3.5"
+
+
+def test_role_provider_field_defaults_to_none():
+    """Role.provider defaults to None (subscription mode)."""
+    role = Role(name="dev", body="body")
+    assert role.provider is None
+
+
+def test_build_session_prompt_local_model_is_minimal():
+    """Ollama roles get a stripped-down prompt without subagent instructions."""
+    from simpleharness.core import build_session_prompt
+
+    role = Role(name="local-worker", body="worker", provider="ollama")
+    task = _task(state=_state(phase="execution"))
+    wf = _workflow()
+    prompt = build_session_prompt(task, role, wf, Path("/toolbox"), None, [])
+    assert "local coding assistant" in prompt
+    assert "Opus" not in prompt
+    assert "subagent" not in prompt.lower()
+    assert len(prompt) < 600  # should be much shorter than the full prompt
+
+
+def test_build_session_prompt_local_model_includes_correction():
+    """Ollama prompt still includes user corrections when present."""
+    from simpleharness.core import build_session_prompt
+
+    role = Role(name="local-worker", body="worker", provider="ollama")
+    task = _task(state=_state(phase="execution"))
+    wf = _workflow()
+    prompt = build_session_prompt(
+        task,
+        role,
+        wf,
+        Path("/toolbox"),
+        "fix the typo in main.py",
+        [],
+    )
+    assert "fix the typo in main.py" in prompt

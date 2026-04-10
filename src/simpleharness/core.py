@@ -103,6 +103,12 @@ class SkillsConfig:
 
 
 @dataclass(frozen=True)
+class OllamaConfig:
+    base_url: str = "http://localhost:11434"
+    default_model: str = "qwen3.5"
+
+
+@dataclass(frozen=True)
 class Config:
     model: str = "opus"
     idle_sleep_seconds: int = 30
@@ -113,6 +119,7 @@ class Config:
     include_partial_messages: bool = True
     permissions: Permissions = field(default_factory=Permissions)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
+    ollama: OllamaConfig = field(default_factory=OllamaConfig)
 
 
 @dataclass(frozen=True)
@@ -121,6 +128,7 @@ class Role:
     body: str  # the system prompt body (frontmatter stripped)
     description: str = ""
     model: str | None = None
+    provider: str | None = None  # None = subscription, "ollama" = local Ollama
     max_turns: int | None = None
     allowed_tools: tuple[str, ...] = field(default_factory=tuple)
     privileged: bool = False
@@ -620,6 +628,41 @@ def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
 
 
 @deal.pure
+def _build_local_session_prompt(
+    task: Task,
+    role: Role,
+    workflow: Workflow,
+    toolbox: Path,
+    correction_text: str | None,
+    phase_files: list[Path],
+    worksite: Path | None = None,
+) -> str:
+    """Minimal session prompt for local Ollama models.
+
+    Strips subagent delegation, phase previews, and verbose instructions
+    to conserve the limited context window (~8-16K tokens).
+    """
+    existing = ", ".join(p.name for p in phase_files) if phase_files else "(none)"
+
+    correction = ""
+    if correction_text:
+        correction = f"**USER OVERRIDE:** {correction_text.strip()}\n\n"
+
+    return f"""{correction}You are a local coding assistant in SimpleHarness.
+
+Worksite: {worksite or task.state.worksite}
+Task folder: {task.folder}
+Role: {role.name} | Phase: {task.state.phase}
+Existing files: {existing}
+
+Read TASK.md and STATE.md, do your work, then update STATE.md.
+Write a phase file (0X-{role.name.replace("-", "_")}.md) recording what you did.
+Run each shell command in a SEPARATE Bash call. Never chain with && or ;.
+If stuck, set STATE.status=blocked and stop.
+"""
+
+
+@deal.pure
 def build_session_prompt(
     task: Task,
     role: Role,
@@ -641,6 +684,18 @@ def build_session_prompt(
     ``phase_previews`` is an optional mapping from filename to preview text
     (first 20 lines) so agents get immediate context without extra tool calls.
     """
+    # ── Local-model (Ollama) prompt: minimal tokens, direct action ──────
+    if role.provider == "ollama":
+        return _build_local_session_prompt(
+            task,
+            role,
+            workflow,
+            toolbox,
+            correction_text,
+            phase_files,
+            worksite,
+        )
+
     existing_files = [p.name for p in phase_files]
     if not existing_files:
         existing_section = "- (none yet)"
@@ -784,6 +839,10 @@ def build_claude_cmd(
         "--session-id",
         session_id,
     ]
+    model = role.model or config.model
+    if model:
+        cmd += ["--model", model]
+
     if config.include_partial_messages:
         cmd.append("--include-partial-messages")
 
@@ -966,8 +1025,17 @@ def build_session_env(
         must_use_sub[sa.name] = list(merged_sa.must_use)
     must_use_sub_json = json.dumps(must_use_sub)
 
+    ollama_env: dict[str, str] = {}
+    if role.provider == "ollama":
+        ollama_env = {
+            "ANTHROPIC_BASE_URL": config.ollama.base_url,
+            "ANTHROPIC_AUTH_TOKEN": "ollama",
+            "ANTHROPIC_API_KEY": "",
+        }
+
     return {
         **base_env,
+        **ollama_env,
         "SIMPLEHARNESS_ROLE": role.name,
         "SIMPLEHARNESS_AVAILABLE_SKILLS": available_json,
         "SIMPLEHARNESS_MUST_USE_MAIN": must_use_main_json,

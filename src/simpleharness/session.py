@@ -359,7 +359,11 @@ def run_session(
             task.folder, enforcement_mode
         )
     else:
-        approver_settings_path = _write_session_settings(task.folder, enforcement_mode)
+        approver_settings_path = _write_session_settings(
+            task.folder,
+            enforcement_mode,
+            is_local=(role.provider == "ollama"),
+        )
     cmd = build_claude_cmd(
         prompt_file,
         role,
