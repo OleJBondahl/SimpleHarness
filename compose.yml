@@ -20,6 +20,8 @@ services:
     tty: true
     stdin_open: true
     working_dir: /worksite
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       SIMPLEHARNESS_SANDBOX: "1"
       SIMPLEHARNESS_WORKSITE: "/worksite"

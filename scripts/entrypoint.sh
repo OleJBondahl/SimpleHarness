@@ -14,6 +14,8 @@ export PATH="/home/harness/.local/bin:${PATH}"
 git config --global core.autocrlf input
 git config --global --add safe.directory /worksite
 git config --global --add safe.directory /opt/simpleharness
+git config --global user.name "SimpleHarness"
+git config --global user.email "harness@simpleharness.local"
 
 # First-run install of the harness. No-op on subsequent runs because the
 # uv tool venv lives in the persistent home volume. Copies only the
