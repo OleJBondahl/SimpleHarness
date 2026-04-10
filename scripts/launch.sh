@@ -98,4 +98,5 @@ fi
 # --- launch ---
 echo "[launch] worksite = ${WORKSITE_PATH}"
 echo "[launch] project  = ${COMPOSE_PROJECT_NAME}"
-exec docker compose run --rm simpleharness
+echo "[launch] dropping into container shell — run 'simpleharness watch' when ready"
+exec docker compose run --rm simpleharness bash

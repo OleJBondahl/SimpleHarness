@@ -2,8 +2,8 @@
 # SimpleHarness container entrypoint. Runs as the `harness` user.
 #
 # First-run bootstrap: installs simpleharness from the bind-mounted toolbox,
-# sets container-local git config, ensures the worksite is initialized and
-# opted in to dangerous mode, then execs the CMD (defaults to `simpleharness watch`).
+# sets container-local git config, initializes the worksite scaffold, then
+# execs the CMD (interactive bash shell via launch.sh).
 set -euo pipefail
 
 export PATH="/home/harness/.local/bin:${PATH}"
@@ -16,10 +16,14 @@ git config --global --add safe.directory /worksite
 git config --global --add safe.directory /opt/simpleharness
 
 # First-run install of the harness. No-op on subsequent runs because the
-# uv tool venv lives in the persistent home volume.
+# uv tool venv lives in the persistent home volume. Copies to /tmp first
+# because setuptools needs to write egg-info and /opt/simpleharness may
+# be read-only.
 if ! command -v simpleharness >/dev/null 2>&1; then
   echo "[entrypoint] installing simpleharness from /opt/simpleharness ..."
-  uv tool install -e /opt/simpleharness
+  cp -r /opt/simpleharness /tmp/simpleharness-build
+  uv tool install /tmp/simpleharness-build
+  rm -rf /tmp/simpleharness-build
 fi
 
 # First-run worksite init.
@@ -28,19 +32,10 @@ if [[ ! -d /worksite/simpleharness ]]; then
   simpleharness init --worksite /worksite
 fi
 
-# First-run dangerous-mode opt-in — only if the user has not provided a
-# worksite config.yaml themselves. The toolbox config.yaml stays safe, so
-# `simpleharness watch` on the host still refuses bypass mode.
-WORKSITE_CFG=/worksite/simpleharness/config.yaml
-if [[ ! -f "${WORKSITE_CFG}" ]]; then
-  echo "[entrypoint] writing dangerous-mode opt-in to ${WORKSITE_CFG}"
-  cat > "${WORKSITE_CFG}" <<'EOF'
-# Container opt-in to dangerous mode. /.dockerenv satisfies the sandbox
-# check at shell.py:699-709 and this override flips the flag.
-permissions:
-  mode: dangerous
-EOF
-fi
+# Note: per-worksite config.yaml is NOT auto-generated. The user creates it
+# (or `simpleharness init` does) with their chosen permission mode.
+# To use dangerous mode inside the container, create the config manually:
+#   echo 'permissions:\n  mode: dangerous' > /worksite/simpleharness/config.yaml
 
 echo "[entrypoint] python=$(python3 --version 2>&1)  node=$(node --version)  uv=$(uv --version | awk '{print $2}')  claude=$(claude --version 2>&1 | head -n1)"
 exec "$@"
