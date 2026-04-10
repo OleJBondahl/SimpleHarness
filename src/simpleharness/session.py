@@ -176,6 +176,9 @@ def stream_and_log(
     proc: subprocess.Popen[str],
     jsonl_log: Path,
     plain_log: Path,
+    *,
+    model: str = "",
+    provider: str = "",
 ) -> tuple[str | None, str | None, float | None, int | None]:
     """Read proc.stdout line-by-line, pretty-print + log, return (session_id, result_text, cost_usd, duration_ms)."""
     session_id: str | None = None
@@ -187,6 +190,11 @@ def stream_and_log(
         jsonl_log.open("w", encoding="utf-8") as jf,
         plain_log.open("w", encoding="utf-8") as pf,
     ):
+        if model:
+            jf.write(
+                json.dumps({"type": "session_meta", "model": model, "provider": provider}) + "\n"
+            )
+            jf.flush()
         assert proc.stdout is not None
         for raw in proc.stdout:
             line = raw.rstrip("\n")
@@ -379,8 +387,10 @@ def run_session(
 
     # 6. banner
     console.rule(f"[cyan]session {idx + 1}  [bold]{role.name}[/]  task={task.slug}")
+    resolved_model = role.model or config.model
+    resolved_provider = role.provider or "subscription"
     say(
-        f"model={config.model}  session_id={session_id[:8]}  max_turns={role.max_turns or config.max_turns_default}"
+        f"model={resolved_model}  provider={resolved_provider}  session_id={session_id[:8]}  max_turns={role.max_turns or config.max_turns_default}"
     )
     if correction:
         say(
@@ -408,7 +418,11 @@ def run_session(
     duration_ms: int | None = None
     try:
         result_session_id, result_text, cost_usd, duration_ms = stream_and_log(
-            proc, jsonl_log, plain_log
+            proc,
+            jsonl_log,
+            plain_log,
+            model=resolved_model,
+            provider=resolved_provider,
         )
         proc.wait()
     except KeyboardInterrupt:

@@ -150,7 +150,7 @@ modules = [
 
 [tool.mutmut]
 paths_to_mutate = ["src/"]
-tests_dir = "tests/"
+tests_dir = ["tests/"]
 
 [tool.vulture]
 min_confidence = 80

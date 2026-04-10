@@ -95,6 +95,12 @@ EOF
   exit 1
 fi
 
+# --- clean Ollama VRAM before launching ---
+if command -v ollama &>/dev/null; then
+    echo "[launch] unloading Ollama models from VRAM..."
+    ollama stop qwen3.5-nothink 2>/dev/null || true
+fi
+
 # --- launch ---
 echo "[launch] worksite = ${WORKSITE_PATH}"
 echo "[launch] project  = ${COMPOSE_PROJECT_NAME}"
