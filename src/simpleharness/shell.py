@@ -506,12 +506,45 @@ def cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _start_ollama() -> subprocess.Popen[bytes] | None:
+    """Start Ollama serve in the background. Returns the process or None."""
+    import shutil
+
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        warn("ollama not found on PATH — skipping --ollama")
+        return None
+    # Check if already running
+    import urllib.request
+
+    try:
+        urllib.request.urlopen("http://localhost:11434/", timeout=2)
+        say("ollama already running at localhost:11434")
+        return None
+    except Exception:
+        pass
+    say("starting ollama serve …")
+    proc = subprocess.Popen(
+        [ollama_bin, "serve"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    # Give it a moment to bind the port
+    time.sleep(1)
+    return proc
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     worksite = worksite_root(args)
     config = load_config(worksite)
     if not worksite_sh_dir(worksite).exists():
         warn("simpleharness/ folder not found — running `init` first")
         cmd_init(args)
+
+    ollama_proc: subprocess.Popen[bytes] | None = None
+    if getattr(args, "ollama", False):
+        ollama_proc = _start_ollama()
+
     # SIGINT must be caught in the harness, not propagated to child automatically.
     # On Windows this is handled per-spawn via CREATE_NEW_PROCESS_GROUP;
     # on Unix, Python default already raises KeyboardInterrupt to the main thread.
@@ -533,6 +566,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         say("stopped by user")
         return 0
+    finally:
+        if ollama_proc is not None:
+            say("stopping ollama serve …")
+            ollama_proc.terminate()
+            ollama_proc.wait(timeout=5)
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -906,6 +944,11 @@ def build_argparser() -> argparse.ArgumentParser:
         "--i-know-its-dangerous",
         action="store_true",
         help="override sandbox check when permissions.mode=dangerous",
+    )
+    p_watch.add_argument(
+        "--ollama",
+        action="store_true",
+        help="start Ollama serve for local model roles (stopped on exit)",
     )
     p_watch.set_defaults(func=cmd_watch)
 
