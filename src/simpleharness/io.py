@@ -35,6 +35,7 @@ from simpleharness.core import (
     build_session_hooks_config,
     parse_frontmatter,
     parse_skill_list,
+    parse_workflow_phases,
     toolbox_root,
 )
 from simpleharness.process import pid_alive
@@ -456,11 +457,12 @@ def load_workflow(name: str) -> Workflow:
         raise FileNotFoundError(f"workflow '{name}' not found at {path}")
     meta, body = read_frontmatter_file(path)
     phases_raw = meta.get("phases") or []
-    if not isinstance(phases_raw, list) or not all(isinstance(p, str) for p in phases_raw):
-        raise ValueError(f"workflow '{name}': phases must be a list of role-name strings")
+    if not isinstance(phases_raw, list):
+        raise ValueError(f"workflow '{name}': phases must be a list")
+    phases = parse_workflow_phases(tuple(phases_raw))
     return Workflow(
         name=str(meta.get("name", name)),
-        phases=tuple(phases_raw),
+        phases=phases,
         max_sessions=meta.get("max_sessions"),
         idle_sleep_seconds=meta.get("idle_sleep_seconds"),
         description=body.strip(),

@@ -347,18 +347,6 @@ def merge_skill_lists(role_skills: SkillList, default_skills: SkillList) -> Skil
 
 
 @dataclass(frozen=True)
-class Workflow:
-    """A named workflow with an ordered list of phase names."""
-
-    name: str
-    phases: tuple[str, ...]
-    max_sessions: int | None = None
-    idle_sleep_seconds: int | None = None
-    description: str = ""
-    source_path: Path | None = None
-
-
-@dataclass(frozen=True)
 class LoopConfig:
     """Configuration for a loop phase block in a workflow."""
 
@@ -379,6 +367,42 @@ class LoopState:
     last_inner_role: str | None = None
     flagged_steps: tuple[int, ...] = ()
     inner_phase: str = "building"  # building | reviewing | critiquing | advancing | e2e_testing
+
+
+@dataclass(frozen=True)
+class Workflow:
+    """A named workflow with an ordered list of phase names."""
+
+    name: str
+    phases: tuple[str | LoopConfig, ...]
+    max_sessions: int | None = None
+    idle_sleep_seconds: int | None = None
+    description: str = ""
+    source_path: Path | None = None
+
+
+@deal.chain(deal.has(), deal.raises(ValueError))
+def parse_workflow_phases(
+    phases_raw: tuple[Any, ...],
+) -> tuple[str | LoopConfig, ...]:
+    """Parse workflow phases list, converting loop dicts to LoopConfig."""
+    result: list[str | LoopConfig] = []
+    for item in phases_raw:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict) and "loop" in item:
+            loop_data = item["loop"]
+            result.append(
+                LoopConfig(
+                    roles=tuple(loop_data.get("roles", ())),
+                    max_cycles=int(loop_data.get("max_cycles", 5)),
+                    max_critic_rounds=int(loop_data.get("max_critic_rounds", 2)),
+                    on_exhaust=str(loop_data.get("on_exhaust", "skip_and_flag")),
+                )
+            )
+        else:
+            raise ValueError(f"invalid phase entry: {item!r}")
+    return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -703,15 +727,116 @@ def resolve_next_role(task: Task, workflow: Workflow) -> str | None:
         return None
     last = task.state.last_role
     if last is None:
-        return phases[0]
+        first = phases[0]
+        return first if isinstance(first, str) else None
     try:
         idx = phases.index(last)
     except ValueError:
         # last_role not in workflow — restart from beginning
-        return phases[0]
+        first = phases[0]
+        return first if isinstance(first, str) else None
     if idx + 1 >= len(phases):
         return None  # past the final phase
-    return phases[idx + 1]
+    nxt = phases[idx + 1]
+    return nxt if isinstance(nxt, str) else None
+
+
+@deal.pure
+def resolve_loop_role(loop_state: LoopState, loop_config: LoopConfig) -> tuple[str, LoopState]:
+    """Given current loop state, return (next_role_name, updated_loop_state).
+
+    This dispatches the role for the current inner_phase. It does NOT
+    process verdicts — those are handled by apply_review_verdict,
+    apply_critique_verdict, and apply_e2e_verdict.
+    """
+    roles = loop_config.roles  # (builder, reviewer, critic)
+    builder = roles[0]
+    reviewer = roles[1]
+    critic = roles[2]
+
+    match loop_state.inner_phase:
+        case "building":
+            return builder, replace(loop_state, inner_phase="reviewing", last_inner_role=builder)
+        case "reviewing":
+            return reviewer, replace(loop_state, last_inner_role=reviewer)
+        case "critiquing":
+            return critic, replace(loop_state, last_inner_role=critic)
+        case "e2e_testing":
+            return builder, replace(loop_state, last_inner_role=builder)
+        case _:
+            return builder, replace(loop_state, inner_phase="building", last_inner_role=builder)
+
+
+@deal.pure
+def apply_review_verdict(
+    loop_state: LoopState, loop_config: LoopConfig, *, verdict: str
+) -> LoopState:
+    """Process reviewer's pass/fail verdict and return updated loop state."""
+    if verdict == "pass":
+        return replace(loop_state, inner_phase="critiquing")
+
+    # fail — increment cycle, check limits
+    new_cycle = loop_state.cycle + 1
+    if new_cycle >= loop_config.max_cycles:
+        # exhausted retries for this step — flag and advance
+        new_flagged = (*loop_state.flagged_steps, loop_state.current_step)
+        next_step = loop_state.current_step + 1
+        if next_step >= loop_state.total_steps:
+            return replace(
+                loop_state,
+                flagged_steps=new_flagged,
+                inner_phase="e2e_testing",
+                cycle=0,
+                critic_rounds=0,
+            )
+        return replace(
+            loop_state,
+            current_step=next_step,
+            cycle=0,
+            critic_rounds=0,
+            flagged_steps=new_flagged,
+            inner_phase="building",
+        )
+    return replace(loop_state, cycle=new_cycle, inner_phase="building")
+
+
+@deal.pure
+def apply_critique_verdict(
+    loop_state: LoopState, loop_config: LoopConfig, *, verdict: str
+) -> LoopState:
+    """Process critic's approved/suggestions verdict and return updated loop state."""
+    if verdict == "approved" or loop_state.critic_rounds + 1 >= loop_config.max_critic_rounds:
+        # Accept step and advance
+        next_step = loop_state.current_step + 1
+        if next_step >= loop_state.total_steps:
+            return replace(
+                loop_state,
+                inner_phase="e2e_testing",
+                cycle=0,
+                critic_rounds=0,
+            )
+        return replace(
+            loop_state,
+            current_step=next_step,
+            cycle=0,
+            critic_rounds=0,
+            inner_phase="building",
+        )
+    # suggestions — loop back to builder
+    return replace(
+        loop_state,
+        critic_rounds=loop_state.critic_rounds + 1,
+        inner_phase="building",
+    )
+
+
+@deal.pure
+def apply_e2e_verdict(loop_state: LoopState, loop_config: LoopConfig, *, verdict: str) -> LoopState:
+    """Process e2e test pass/fail verdict and return updated loop state."""
+    if verdict == "pass":
+        return replace(loop_state, inner_phase="done")
+    # fail — re-enter building
+    return replace(loop_state, inner_phase="building", cycle=0, critic_rounds=0)
 
 
 @deal.pure
@@ -822,7 +947,7 @@ def build_session_prompt(
 - Toolbox (your brain, role files, workflows): {toolbox}
 - Current task folder: {task.folder}
 - Your role: {role.name}
-- Workflow: {workflow.name} (phases: {" -> ".join(workflow.phases)})
+- Workflow: {workflow.name} (phases: {" -> ".join(str(p) if isinstance(p, str) else "[loop]" for p in workflow.phases)})
 - Your base model: Opus. You MUST delegate mechanical work to Sonnet/Haiku
   subagents via the Agent tool to preserve your context window.
 
@@ -1213,7 +1338,9 @@ def _resolve_next_role(
     """
     correction_pending = task.slug in corrections
     if correction_pending:
-        role_name = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+        first_phase = workflow.phases[0] if workflow.phases else None
+        first_str: str | None = first_phase if isinstance(first_phase, str) else None
+        role_name: str | None = task.state.last_role or first_str
         if role_name is None:
             return None, TickPlan(
                 kind="block",
@@ -1224,7 +1351,9 @@ def _resolve_next_role(
 
     role_name = resolve_next_role(task, workflow)
     if role_name is None:
-        fallback = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+        first_phase = workflow.phases[0] if workflow.phases else None
+        first_str_fb: str | None = first_phase if isinstance(first_phase, str) else None
+        fallback: str | None = task.state.last_role or first_str_fb
         if fallback is None:
             return None, TickPlan(
                 kind="block",

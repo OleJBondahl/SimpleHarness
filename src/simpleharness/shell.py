@@ -597,7 +597,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         workflow_phases: tuple[str, ...] = ()
         with contextlib.suppress(Exception):
             wf = load_workflow(t.state.workflow)
-            workflow_phases = wf.phases
+            workflow_phases = tuple(p for p in wf.phases if isinstance(p, str))  # type: ignore[assignment]
 
         dash = format_task_dashboard(t.state, workflow_phases)
 

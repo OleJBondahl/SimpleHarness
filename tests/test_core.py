@@ -28,6 +28,9 @@ from simpleharness.core import (
     _format_tool_call,
     _merge_config,
     _slugify,
+    apply_critique_verdict,
+    apply_e2e_verdict,
+    apply_review_verdict,
     build_claude_cmd,
     build_rebrief_text,
     build_refinement_text,
@@ -41,10 +44,12 @@ from simpleharness.core import (
     format_task_dashboard,
     parse_frontmatter,
     parse_task_spec,
+    parse_workflow_phases,
     pause_file_path,
     pick_next_task,
     plan_downstream_transitions,
     plan_tick,
+    resolve_loop_role,
     resolve_next_role,
     worksite_sh_dir,
 )
@@ -1773,3 +1778,162 @@ def test_loop_state_frozen():
     ls = LoopState()
     with pytest.raises(dataclasses.FrozenInstanceError):
         cast("Any", ls).cycle = 1
+
+
+# ── Loop state machine ───────────────────────────────────────────────────────
+
+
+def _loop_config(
+    *,
+    roles: tuple[str, ...] = ("local-builder", "local-reviewer", "local-critic"),
+    max_cycles: int = 5,
+    max_critic_rounds: int = 2,
+) -> LoopConfig:
+    return LoopConfig(roles=roles, max_cycles=max_cycles, max_critic_rounds=max_critic_rounds)
+
+
+def _loop_state(**kwargs: Any) -> LoopState:
+    return LoopState(**kwargs)
+
+
+def test_loop_building_dispatches_builder():
+    ls = _loop_state(inner_phase="building", total_steps=2)
+    lc = _loop_config()
+    role, new_ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+    assert new_ls.inner_phase == "reviewing"
+    assert new_ls.last_inner_role == "local-builder"
+
+
+def test_loop_reviewing_dispatches_reviewer():
+    ls = _loop_state(inner_phase="reviewing", total_steps=2)
+    lc = _loop_config()
+    role, new_ls = resolve_loop_role(ls, lc)
+    assert role == "local-reviewer"
+    assert new_ls.last_inner_role == "local-reviewer"
+
+
+def test_loop_resolve_review_pass():
+    ls = _loop_state(inner_phase="reviewing", total_steps=2)
+    lc = _loop_config()
+    new_ls = apply_review_verdict(ls, lc, verdict="pass")
+    assert new_ls.inner_phase == "critiquing"
+
+
+def test_loop_resolve_review_fail_increments_cycle():
+    ls = _loop_state(inner_phase="reviewing", cycle=1, total_steps=2)
+    lc = _loop_config()
+    new_ls = apply_review_verdict(ls, lc, verdict="fail")
+    assert new_ls.inner_phase == "building"
+    assert new_ls.cycle == 2
+
+
+def test_loop_resolve_review_fail_at_max_cycles_flags_step():
+    ls = _loop_state(inner_phase="reviewing", cycle=4, current_step=1, total_steps=3)
+    lc = _loop_config(max_cycles=5)
+    new_ls = apply_review_verdict(ls, lc, verdict="fail")
+    assert new_ls.inner_phase == "building"
+    assert new_ls.current_step == 2
+    assert 1 in new_ls.flagged_steps
+    assert new_ls.cycle == 0
+
+
+def test_loop_critiquing_dispatches_critic():
+    ls = _loop_state(inner_phase="critiquing", total_steps=2)
+    lc = _loop_config()
+    role, new_ls = resolve_loop_role(ls, lc)
+    assert role == "local-critic"
+    assert new_ls.last_inner_role == "local-critic"
+
+
+def test_loop_resolve_critique_approved_advances_step():
+    ls = _loop_state(inner_phase="critiquing", current_step=0, total_steps=3)
+    lc = _loop_config()
+    new_ls = apply_critique_verdict(ls, lc, verdict="approved")
+    assert new_ls.current_step == 1
+    assert new_ls.inner_phase == "building"
+    assert new_ls.cycle == 0
+    assert new_ls.critic_rounds == 0
+
+
+def test_loop_resolve_critique_suggestions_loops_back():
+    ls = _loop_state(inner_phase="critiquing", critic_rounds=0, total_steps=2)
+    lc = _loop_config()
+    new_ls = apply_critique_verdict(ls, lc, verdict="suggestions")
+    assert new_ls.inner_phase == "building"
+    assert new_ls.critic_rounds == 1
+
+
+def test_loop_resolve_critique_at_max_rounds_accepts():
+    ls = _loop_state(inner_phase="critiquing", critic_rounds=1, current_step=0, total_steps=3)
+    lc = _loop_config(max_critic_rounds=2)
+    new_ls = apply_critique_verdict(ls, lc, verdict="suggestions")
+    assert new_ls.current_step == 1
+    assert new_ls.inner_phase == "building"
+    assert new_ls.critic_rounds == 0
+
+
+def test_loop_last_step_approved_enters_e2e():
+    ls = _loop_state(inner_phase="critiquing", current_step=2, total_steps=3)
+    lc = _loop_config()
+    new_ls = apply_critique_verdict(ls, lc, verdict="approved")
+    assert new_ls.inner_phase == "e2e_testing"
+
+
+def test_loop_e2e_testing_dispatches_builder():
+    ls = _loop_state(inner_phase="e2e_testing", total_steps=3)
+    lc = _loop_config()
+    role, new_ls = resolve_loop_role(ls, lc)
+    assert role == "local-builder"
+    assert new_ls.last_inner_role == "local-builder"
+
+
+def test_loop_e2e_pass_returns_done():
+    ls = _loop_state(inner_phase="e2e_testing", total_steps=3)
+    lc = _loop_config()
+    new_ls = apply_e2e_verdict(ls, lc, verdict="pass")
+    assert new_ls.inner_phase == "done"
+
+
+def test_loop_e2e_fail_retries():
+    ls = _loop_state(inner_phase="e2e_testing", total_steps=3, flagged_steps=(1,))
+    lc = _loop_config()
+    new_ls = apply_e2e_verdict(ls, lc, verdict="fail")
+    assert new_ls.inner_phase == "building"
+
+
+def test_workflow_with_loop_phase():
+    loop = LoopConfig(roles=("local-builder", "local-reviewer", "local-critic"))
+    wf = Workflow(
+        name="hybrid",
+        phases=("project-leader", "brainstormer", "plan-writer", loop, "project-leader"),
+    )
+    assert len(wf.phases) == 5
+    assert isinstance(wf.phases[3], LoopConfig)
+    assert wf.phases[3].roles == ("local-builder", "local-reviewer", "local-critic")
+
+
+def test_parse_workflow_phases_strings():
+    result = parse_workflow_phases(("a", "b", "c"))
+    assert result == ("a", "b", "c")
+
+
+def test_parse_workflow_phases_with_loop():
+    raw = (
+        "project-leader",
+        {"loop": {"roles": ["local-builder", "local-reviewer", "local-critic"], "max_cycles": 3}},
+        "project-leader",
+    )
+    result = parse_workflow_phases(raw)
+    assert len(result) == 3
+    assert result[0] == "project-leader"
+    assert isinstance(result[1], LoopConfig)
+    assert result[1].roles == ("local-builder", "local-reviewer", "local-critic")
+    assert result[1].max_cycles == 3
+    assert result[1].max_critic_rounds == 2  # default
+    assert result[2] == "project-leader"
+
+
+def test_parse_workflow_phases_invalid():
+    with pytest.raises(ValueError, match="invalid phase entry"):
+        parse_workflow_phases((42,))
