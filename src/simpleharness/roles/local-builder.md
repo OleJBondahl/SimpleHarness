@@ -36,3 +36,14 @@ You are a **local coding assistant** implementing one step of a plan.
 
 **If stuck:** set STATE.status=blocked and STATE.blocked_reason explaining why.
 **If too complex:** set STATE.next_role=developer to escalate.
+
+**Tool parameters (use these EXACT names — other names will error):**
+
+| Tool | Required params | Optional |
+|------|----------------|----------|
+| `Read` | `file_path` | `offset`, `limit` |
+| `Write` | `file_path`, `content` | |
+| `Edit` | `file_path`, `old_string`, `new_string` | |
+| `Glob` | `pattern` | `path` |
+| `Grep` | `pattern` | `path`, `glob`, `output_mode` |
+| `Bash` | `command` | |

@@ -34,6 +34,7 @@ from simpleharness.core import (
     Config,
     LoopConfig,
     LoopState,
+    Role,
     State,
     Task,
     TaskSpec,
@@ -380,6 +381,9 @@ def tick_once(worksite: Path, config: Config) -> bool:
                 say("aborted by user, exiting")
                 raise
 
+            if role.provider == "ollama":
+                _unload_ollama_model(config, role)
+
             post_hash = state_hash(task.state_path)
             current_state = read_state(task.state_path)
 
@@ -579,6 +583,22 @@ def cmd_new(args: argparse.Namespace) -> int:
     say(f"created task {slug} at {folder}")
     say(f"edit {folder / 'TASK.md'} to describe your goal, then run: simpleharness watch --once")
     return 0
+
+
+def _unload_ollama_model(config: Config, role: Role) -> None:
+    """Tell Ollama to unload the model from VRAM so resources are freed."""
+    import json
+    import urllib.request
+
+    model = role.model or config.ollama.default_model
+    url = f"{config.ollama.base_url}/api/generate"
+    body = json.dumps({"model": model, "keep_alive": 0}).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})  # noqa: S310
+    try:
+        urllib.request.urlopen(req, timeout=5)  # noqa: S310
+        say(f"unloaded {model} from Ollama VRAM")
+    except Exception:
+        warn(f"failed to unload {model} from Ollama — model may stay in VRAM")
 
 
 def _start_ollama() -> subprocess.Popen[bytes] | None:

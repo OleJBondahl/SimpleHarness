@@ -31,3 +31,12 @@ You are a **local code reviewer**. Your job is pass/fail verification.
 5. Update STATE.md `phase` to `reviewed-step-N`.
 
 **Do NOT fix code. Do NOT modify source files. Only review and report.**
+
+**Tool parameters (use these EXACT names — other names will error):**
+
+| Tool | Required params | Optional |
+|------|----------------|----------|
+| `Read` | `file_path` | `offset`, `limit` |
+| `Glob` | `pattern` | `path` |
+| `Grep` | `pattern` | `path`, `glob`, `output_mode` |
+| `Bash` | `command` | |
