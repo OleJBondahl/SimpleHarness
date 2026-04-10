@@ -28,5 +28,14 @@ jobs:
       - name: Type check
         run: uv run ty check
 
+      - name: Architecture boundaries
+        run: uv run lint-imports
+
+      - name: Dead code
+        run: uv run vulture src --min-confidence 80
+
+      - name: Cognitive complexity (core modules)
+        run: uv run complexipy src/simpleharness/core.py src/simpleharness/approver_core.py src/simpleharness/benchmark_core.py src/simpleharness/hooks --max-complexity-allowed 22
+
       - name: Tests
         run: uv run pytest
