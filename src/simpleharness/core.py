@@ -219,6 +219,60 @@ def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, A
 
 
 @deal.chain(deal.has(), deal.raises(ValueError))
+def _parse_available_skills(available_raw: list[str | dict[str, object]]) -> tuple[Skill, ...]:
+    """Parse a list of skill entries from frontmatter into a tuple of Skill objects.
+
+    Each entry may be a plain string (name only) or a dict with a required ``name``
+    key and an optional ``hint`` key. Any other type raises ``ValueError``.
+
+    Args:
+        available_raw: The raw list read from the ``skills.available`` frontmatter field.
+
+    Returns:
+        A tuple of Skill objects parsed from the list.
+
+    Raises:
+        ValueError: If any entry is not a string or dict, or if a dict entry
+            is missing the ``name`` key.
+    """
+    skills: list[Skill] = []
+    for entry in available_raw:
+        if isinstance(entry, str):
+            skills.append(Skill(name=entry))
+        elif isinstance(entry, dict):
+            if "name" not in entry:
+                raise ValueError("skills.available: each entry must have a 'name' key")
+            skills.append(Skill(name=str(entry["name"]), hint=str(entry.get("hint", ""))))
+        else:
+            raise ValueError("skills.available: each entry must be a string or mapping")
+    return tuple(skills)
+
+
+@deal.chain(deal.has(), deal.raises(ValueError))
+def _parse_optional_str_list(raw: object, field_name: str) -> tuple[str, ...]:
+    """Parse an optional list-of-strings field from frontmatter.
+
+    Returns an empty tuple if the value is None, converts each element to
+    ``str`` if the value is a list, and raises ``ValueError`` for any other type.
+
+    Args:
+        raw: The raw value read from the frontmatter field (may be None).
+        field_name: The dotted frontmatter key name used in error messages.
+
+    Returns:
+        A tuple of strings, or an empty tuple when the field is absent.
+
+    Raises:
+        ValueError: If ``raw`` is not None or a list.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ValueError(f"{field_name}: must be a list")
+    return tuple(str(s) for s in raw)
+
+
+@deal.chain(deal.has(), deal.raises(ValueError))
 def parse_skill_list(raw: Any) -> SkillList:
     """Parse the `skills:` block from frontmatter into a SkillList.
 
@@ -238,33 +292,12 @@ def parse_skill_list(raw: Any) -> SkillList:
     elif not isinstance(available_raw, list):
         raise ValueError("skills.available: must be a list")
     else:
-        skills: list[Skill] = []
-        for entry in available_raw:
-            if isinstance(entry, str):
-                skills.append(Skill(name=entry))
-            elif isinstance(entry, dict):
-                if "name" not in entry:
-                    raise ValueError("skills.available: each entry must have a 'name' key")
-                skills.append(Skill(name=str(entry["name"]), hint=str(entry.get("hint", ""))))
-            else:
-                raise ValueError("skills.available: each entry must be a string or mapping")
-        available = tuple(skills)
+        available = _parse_available_skills(available_raw)
 
-    must_use_raw = raw.get("must_use")
-    if must_use_raw is None:
-        must_use: tuple[str, ...] = ()
-    elif not isinstance(must_use_raw, list):
-        raise ValueError("skills.must_use: must be a list")
-    else:
-        must_use = tuple(str(s) for s in must_use_raw)
-
-    exclude_raw = raw.get("exclude_default_must_use")
-    if exclude_raw is None:
-        exclude_default_must_use: tuple[str, ...] = ()
-    elif not isinstance(exclude_raw, list):
-        raise ValueError("skills.exclude_default_must_use: must be a list")
-    else:
-        exclude_default_must_use = tuple(str(s) for s in exclude_raw)
+    must_use = _parse_optional_str_list(raw.get("must_use"), "skills.must_use")
+    exclude_default_must_use = _parse_optional_str_list(
+        raw.get("exclude_default_must_use"), "skills.exclude_default_must_use"
+    )
 
     return SkillList(
         available=available,
@@ -1098,6 +1131,88 @@ class TickPlan:
 
 
 @deal.pure
+def _plan_when_no_task(
+    tasks: tuple[Task, ...],
+    now: datetime,
+) -> TickPlan:
+    """Determine the TickPlan when pick_next_task returned None.
+
+    Distinguishes between all-backoff, waiting-on-deps, and no-active cases
+    by inspecting the task list.
+
+    Args:
+        tasks: The full tuple of tasks (non-empty).
+        now: The current wall-clock time used to evaluate backoff windows.
+
+    Returns:
+        A TickPlan with kind ``all_backoff``, ``waiting_on_deps``, or ``no_active``.
+    """
+    has_active_in_backoff = any(
+        t.state.status == "active"
+        and t.state.retry_after is not None
+        and (parsed := _parse_retry_after(t.state.retry_after)) is not None
+        and parsed > now
+        for t in tasks
+    )
+    if has_active_in_backoff:
+        return TickPlan(kind="all_backoff")
+    has_active_with_unmet_deps = any(
+        t.state.status == "active"
+        and t.spec is not None
+        and not deps_satisfied(t.spec, {tt.slug: tt.state.status for tt in tasks})
+        for t in tasks
+    )
+    if has_active_with_unmet_deps:
+        return TickPlan(kind="waiting_on_deps")
+    return TickPlan(kind="no_active")
+
+
+@deal.pure
+def _resolve_next_role(
+    task: Task,
+    workflow: Workflow,
+    corrections: frozenset[str],
+) -> tuple[str, None] | tuple[None, TickPlan]:
+    """Determine the next role name for a task, or return a blocking TickPlan.
+
+    Returns a 2-tuple where either the first element is the role name (and the
+    second is None), or the first element is None and the second is a blocking
+    TickPlan to return immediately.
+
+    Args:
+        task: The task that is about to run.
+        workflow: The workflow loaded for that task.
+        corrections: The set of task slugs that have a pending correction.
+
+    Returns:
+        ``(role_name, None)`` when a role was successfully resolved, or
+        ``(None, block_plan)`` when no role could be determined.
+    """
+    correction_pending = task.slug in corrections
+    if correction_pending:
+        role_name = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+        if role_name is None:
+            return None, TickPlan(
+                kind="block",
+                block_task_slug=task.slug,
+                block_reason="correction pending but workflow has no phases",
+            )
+        return role_name, None
+
+    role_name = resolve_next_role(task, workflow)
+    if role_name is None:
+        fallback = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
+        if fallback is None:
+            return None, TickPlan(
+                kind="block",
+                block_task_slug=task.slug,
+                block_reason="workflow has no phases",
+            )
+        return fallback, None
+    return role_name, None
+
+
+@deal.pure
 def plan_tick(
     tasks: tuple[Task, ...],
     workflows_by_name: Mapping[str, Workflow | None],
@@ -1120,24 +1235,7 @@ def plan_tick(
 
     task = pick_next_task(tasks, corrections, now)
     if task is None:
-        has_active_in_backoff = any(
-            t.state.status == "active"
-            and t.state.retry_after is not None
-            and (parsed := _parse_retry_after(t.state.retry_after)) is not None
-            and parsed > now
-            for t in tasks
-        )
-        if has_active_in_backoff:
-            return TickPlan(kind="all_backoff")
-        has_active_with_unmet_deps = any(
-            t.state.status == "active"
-            and t.spec is not None
-            and not deps_satisfied(t.spec, {tt.slug: tt.state.status for tt in tasks})
-            for t in tasks
-        )
-        if has_active_with_unmet_deps:
-            return TickPlan(kind="waiting_on_deps")
-        return TickPlan(kind="no_active")
+        return _plan_when_no_task(tasks, now)
 
     # session cap check before spending
     if task.state.total_sessions >= task.state.session_cap:
@@ -1156,28 +1254,9 @@ def plan_tick(
             block_reason=f"workflow load failed: {task.state.workflow!r}",
         )
 
-    # determine next role
-    correction_pending = task.slug in corrections
-    if correction_pending:
-        next_role_name = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
-        if next_role_name is None:
-            return TickPlan(
-                kind="block",
-                block_task_slug=task.slug,
-                block_reason="correction pending but workflow has no phases",
-            )
-    else:
-        next_role_name = resolve_next_role(task, workflow)
-        if next_role_name is None:
-            # past final phase — loop back
-            fallback = task.state.last_role or (workflow.phases[0] if workflow.phases else None)
-            if fallback is None:
-                return TickPlan(
-                    kind="block",
-                    block_task_slug=task.slug,
-                    block_reason="workflow has no phases",
-                )
-            next_role_name = fallback
+    next_role_name, block_plan = _resolve_next_role(task, workflow, corrections)
+    if block_plan is not None:
+        return block_plan
 
     return TickPlan(
         kind="run",

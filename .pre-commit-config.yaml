@@ -46,7 +46,7 @@ repos:
 
       - id: codesight
         name: codesight (regenerate codebase map)
-        entry: bash -c 'npx codesight --wiki && git add .codesight/'
+        entry: npx codesight --wiki
         language: system
         pass_filenames: false
         files: \.py$
@@ -64,13 +64,6 @@ repos:
         language: system
         pass_filenames: false
         files: \.py$
-
-      - id: complexipy
-        name: complexipy (cognitive complexity)
-        entry: uv run complexipy
-        language: system
-        pass_filenames: false
-        files: ^src/simpleharness/(core|approver_core|benchmark_core|hooks/)
 
       - id: detect-secrets
         name: detect secrets

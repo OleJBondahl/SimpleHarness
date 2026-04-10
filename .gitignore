@@ -29,5 +29,9 @@ claude-tools/
 .superpowers/
 docs/superpowers/
 
+# Tool caches
+.complexipy_cache/
+.codesight/
+
 # SimpleHarness runtime logs
 simpleharness/logs/

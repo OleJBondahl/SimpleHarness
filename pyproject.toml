@@ -73,33 +73,33 @@ extend-select = [
     "TCH",    # flake8-type-checking — TYPE_CHECKING imports
 ]
 extend-ignore = [
-    "D100",   # missing docstring in public module
-    "D104",   # missing docstring in public package
-    "D105",   # missing docstring in magic method
-    "D107",   # missing docstring in __init__
-    "S101",   # assert used — we use assert in tests and deal contracts
-    "S608",   # false positive — f-strings in prompt templates, not SQL
+    "D100",   # missing docstring in public module — low value
+    "D105",   # missing docstring in magic method — self-documenting
 ]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.mccabe]
-max-complexity = 15
+max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-# Shell modules: allow print, relax complexity
-"src/simpleharness/shell.py" = ["T20", "C90", "S603", "S607"]
-"src/simpleharness/approver_shell.py" = ["T20", "C90", "S603", "S607"]
-"src/simpleharness/session.py" = ["T20", "C90", "S603", "S607"]
+# Shell modules: allow print, subprocess, relax cyclomatic complexity (impure I/O)
+"src/simpleharness/shell.py" = ["T20", "C90", "S101", "S603", "S607"]
+"src/simpleharness/approver_shell.py" = ["T20", "C90", "S101", "S603", "S607"]
+"src/simpleharness/session.py" = ["T20", "C90", "S101", "S603", "S607"]
 "src/simpleharness/io.py" = ["T20", "C90"]
 "src/simpleharness/process.py" = ["T20", "S603", "S607"]
 "src/simpleharness/benchmark.py" = ["T20", "C90", "S603", "S607"]
 "src/simpleharness/ui.py" = ["T20"]
-# Tests: relax docstrings, asserts, print, security, naming
-"tests/**" = ["D", "S", "T20", "PT", "N"]
-# Scripts: relax docstrings, print, security
-"scripts/**" = ["D", "T20", "S"]
+# Core: suppress f-string false positives (prompt templates, not SQL)
+"src/simpleharness/core.py" = ["S608"]
+# Tests: relax docstrings, asserts, print, naming, hardcoded temp paths
+"tests/**" = ["D", "S101", "S105", "S108", "T20", "N"]
+# Scripts: relax docstrings, print, asserts, hardcoded temp paths
+"scripts/**" = ["D", "T20", "S101", "S108"]
+# Benchmarks: relax asserts, hardcoded temp paths
+"benchmarks/**" = ["D", "S101", "S108", "T20", "N"]
 
 [dependency-groups]
 dev = [
@@ -112,7 +112,6 @@ dev = [
     "mutmut>=3.4.0",
     "import-linter>=2.5",
     "vulture>=2.14",
-    "complexipy>=3.3.0",
 ]
 security = [
     "detect-secrets>=1.5.0",
@@ -157,10 +156,6 @@ tests_dir = "tests/"
 [tool.vulture]
 min_confidence = 80
 paths = ["src"]
-
-[tool.complexipy]
-paths = ["src"]
-max_complexity_allowed = 22
 
 [tool.ty.rules]
 all = "error"

@@ -66,7 +66,7 @@ def _env(*, fake: bool = False) -> ApproverEnv:
 
 
 @pytest.mark.parametrize(
-    "tokens,expected_head",
+    ("tokens", "expected_head"),
     [
         (["sudo", "git", "push"], "git"),
         (["env", "FOO=bar", "python", "script.py"], "python"),
@@ -109,7 +109,7 @@ def test_unwrap_wrappers_empty():
 
 
 @pytest.mark.parametrize(
-    "cmd,expected",
+    ("cmd", "expected"),
     [
         ("git status", "git"),
         ("sudo apt-get install foo", "apt-get"),

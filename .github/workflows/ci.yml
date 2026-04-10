@@ -32,10 +32,7 @@ jobs:
         run: uv run lint-imports
 
       - name: Dead code
-        run: uv run vulture src --min-confidence 80
-
-      - name: Cognitive complexity (core modules)
-        run: uv run complexipy src/simpleharness/core.py src/simpleharness/approver_core.py src/simpleharness/benchmark_core.py src/simpleharness/hooks --max-complexity-allowed 22
+        run: uv run vulture
 
       - name: Tests
         run: uv run pytest

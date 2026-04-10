@@ -10,7 +10,7 @@ Invoke via the Skill tool: `python-coding-and-tooling`.
 
 ## Codebase Orientation
 
-Before exploring source files, orient yourself through the auto-generated context in `.codesight/`. This map is regenerated on every commit via pre-commit hook.
+Before exploring source files, orient yourself through the auto-generated context in `.codesight/`. This directory is gitignored but regenerated on every commit via pre-commit hook. If missing, run `npx codesight --wiki` to generate it.
 
 1. **Start here:** Read `.codesight/wiki/index.md` (~200 tokens) for a subsystem overview and article list.
 2. **For function signatures:** Read `.codesight/libs.md` — complete index of exported functions with parameters across all modules.
@@ -22,7 +22,7 @@ Only after identifying the relevant files through the map should you read actual
 
 - **Python 3.13** via `uv`.
 - `ruff` (100-col, 18 rule sets including S, C90, D, PERF, FURB, N, TCH) and `ty` (all rules = error) are wired into a PostToolUse hook that runs on every `.py` edit.
-- Quality gates in pre-commit: ruff, ty, deal-lint, fp-purity-gate, import-linter (architecture boundaries), vulture (dead code), complexipy (cognitive complexity), codesight, detect-secrets.
+- Quality gates in pre-commit: ruff (18 rule sets, C901 complexity at 10), ty (all=error), deal-lint, fp-purity-gate, codesight, import-linter, vulture, detect-secrets.
 - The FC/IS refactor is **complete**. All logic is split into pure core modules and impure shell modules.
 
 ## Common Commands

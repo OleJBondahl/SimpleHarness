@@ -133,34 +133,42 @@ def _deny_synthetic(reason: str) -> Verdict:
 
 
 @deal.pure
-def parse_verdict(final_message: str) -> Verdict:
-    """Extract and validate the approver's JSON verdict.
+def _extract_raw_json(final_message: str) -> str | None:
+    """Extract the last JSON block string from an approver message.
 
-    On any parse failure (no block, bad JSON, missing fields, invalid
-    decision enum, non-string reason), returns a synthetic deny Verdict
-    with a diagnostic reason. Never raises.
+    Returns the raw JSON string (not yet parsed) if found, or None if no
+    JSON block can be located. Handles both fenced code blocks and bare
+    top-level objects.
+
+    Args:
+        final_message: The full text returned by the approver LLM.
+
+    Returns:
+        The raw JSON string to parse, or None if nothing was found.
     """
-    if not isinstance(final_message, str) or not final_message.strip():
-        return _deny_synthetic("approver returned empty message")
-
     matches = _JSON_BLOCK_RE.findall(final_message)
     if not matches:
         tail = final_message.strip()
         if tail.startswith("{") and tail.endswith("}"):
-            matches = [tail]
-    if not matches:
-        snippet = final_message.strip()[-120:]
-        return _deny_synthetic(f"approver returned malformed verdict: {snippet!r}")
+            return tail
+        return None
+    return matches[-1].strip()
 
-    raw = matches[-1].strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        return _deny_synthetic(f"approver returned malformed verdict: {e}")
 
-    if not isinstance(data, dict):
-        return _deny_synthetic("approver verdict was not a JSON object")
+@deal.pure
+def _validate_verdict_fields(data: dict[str, object]) -> Verdict | None:
+    """Validate the parsed verdict dict and return a Verdict or a synthetic deny.
 
+    Returns a proper Verdict if all fields are valid, or a synthetic deny
+    Verdict with a diagnostic reason if any field is missing or malformed.
+
+    Args:
+        data: A dict parsed from the approver's JSON block.
+
+    Returns:
+        A Verdict (allow or deny) built from the data, or a synthetic deny
+        Verdict describing the first validation failure found.
+    """
     decision = data.get("decision")
     pattern = data.get("pattern", "")
     reason = data.get("reason", "")
@@ -175,7 +183,40 @@ def parse_verdict(final_message: str) -> Verdict:
         return _deny_synthetic("approver allow verdict had empty pattern")
     if not reason.strip():
         return _deny_synthetic("approver verdict had empty reason")
+    return None
 
+
+@deal.pure
+def parse_verdict(final_message: str) -> Verdict:
+    """Extract and validate the approver's JSON verdict.
+
+    On any parse failure (no block, bad JSON, missing fields, invalid
+    decision enum, non-string reason), returns a synthetic deny Verdict
+    with a diagnostic reason. Never raises.
+    """
+    if not isinstance(final_message, str) or not final_message.strip():
+        return _deny_synthetic("approver returned empty message")
+
+    raw = _extract_raw_json(final_message)
+    if raw is None:
+        snippet = final_message.strip()[-120:]
+        return _deny_synthetic(f"approver returned malformed verdict: {snippet!r}")
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return _deny_synthetic(f"approver returned malformed verdict: {e}")
+
+    if not isinstance(data, dict):
+        return _deny_synthetic("approver verdict was not a JSON object")
+
+    validation_error = _validate_verdict_fields(data)
+    if validation_error is not None:
+        return validation_error
+
+    decision = data.get("decision")
+    pattern = data.get("pattern", "")
+    reason = data.get("reason", "")
     return Verdict(decision=decision, pattern=pattern, reason=reason)
 
 
