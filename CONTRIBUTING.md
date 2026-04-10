@@ -17,7 +17,21 @@ You need Python 3.13+ and [uv](https://docs.astral.sh/uv/) installed.
 
 ## Running the checks
 
-Run each command separately (do not chain with `&&`):
+Pre-commit hooks run automatically on each commit (ruff, deal-lint, codesight, vale, detect-secrets). To run the **full CI pipeline** locally — including type checking, architecture boundaries, dead code detection, coverage gates, and everything else:
+
+```bash
+bash scripts/ci-local.sh
+```
+
+To also run mutation testing (requires WSL with Ubuntu):
+
+```bash
+bash scripts/ci-local.sh --mutate
+```
+
+All checks must pass before you submit a PR.
+
+You can also run individual tools separately:
 
 ```bash
 uv run pytest
@@ -25,8 +39,6 @@ uv run ruff check .
 uv run ruff format --check .
 uv run ty check
 ```
-
-All four must pass before you submit a PR.
 
 ## Code style
 

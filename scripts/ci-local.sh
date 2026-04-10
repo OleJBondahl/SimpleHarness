@@ -20,6 +20,21 @@ uv run lint-imports
 echo "=== Dead code ==="
 uv run vulture
 
+echo "=== Deal lint (FP purity) ==="
+uv run python -X utf8 -m deal lint src/simpleharness/core.py src/simpleharness/approver_core.py
+
+echo "=== FP purity gate ==="
+uv run python -X utf8 scripts/check_fp_purity.py src/simpleharness/core.py src/simpleharness/approver_core.py
+
+echo "=== Deal runtime contracts ==="
+uv run python -X utf8 scripts/check_deal_runtime.py
+
+echo "=== Codebase map ==="
+npx codesight --wiki
+
+echo "=== Detect secrets ==="
+uv run --group security detect-secrets-hook --baseline .secrets.baseline $(git ls-files -- '*.py' '*.md' '*.yaml' '*.yml' '*.toml' '*.json' '*.sh')
+
 echo "=== Tests ==="
 uv run pytest
 
