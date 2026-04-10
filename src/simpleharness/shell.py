@@ -427,6 +427,16 @@ def cmd_init(args: argparse.Namespace) -> int:
             "# Worksite memory\n\nLong-term notes that every session can read.\n",
             encoding="utf-8",
         )
+    # Ensure simpleharness artifacts are gitignored
+    gitignore = worksite / ".gitignore"
+    needed = ["simpleharness/logs", "simpleharness/tasks/.*"]
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    existing_lines = set(existing.splitlines())
+    to_add = [p for p in needed if p not in existing_lines]
+    if to_add:
+        sep = "" if existing.endswith("\n") or not existing else "\n"
+        gitignore.write_text(existing + sep + "\n".join(to_add) + "\n", encoding="utf-8")
+
     say(f"initialized {sh}")
     return 0
 
