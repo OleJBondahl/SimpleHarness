@@ -947,13 +947,34 @@ def _build_local_session_prompt(
     if correction_text:
         correction = f"**USER OVERRIDE:** {correction_text.strip()}\n\n"
 
+    loop_context = ""
+    if task.state.loop_state is not None:
+        ls = task.state.loop_state
+        if ls.inner_phase == "e2e_testing":
+            loop_context = (
+                "\n**E2E TESTING:** Run the full test suite. All tests must pass.\n"
+                "Report results in STATE.md phase field.\n"
+            )
+        else:
+            step_num = ls.current_step + 1  # display as 1-indexed
+            loop_context = (
+                f"\n**Current task:** Step {step_num} of {ls.total_steps} from PLAN.md.\n"
+                f"Read '## Step {step_num}' in PLAN.md for your instructions.\n"
+            )
+            if ls.cycle > 0:
+                loop_context += f"(Retry {ls.cycle} — previous attempt did not pass review.)\n"
+            if ls.critic_rounds > 0:
+                loop_context += (
+                    f"(Critic round {ls.critic_rounds} — apply the suggestions from CRITIQUE.md.)\n"
+                )
+
     return f"""{correction}You are a local coding assistant in SimpleHarness.
 
 Worksite: {worksite or task.state.worksite}
 Task folder: {task.folder}
 Role: {role.name} | Phase: {task.state.phase}
 Existing files: {existing}
-
+{loop_context}
 Read TASK.md and STATE.md, do your work, then update STATE.md.
 Write a phase file (0X-{role.name.replace("-", "_")}.md) recording what you did.
 Run each shell command in a SEPARATE Bash call. Never chain with && or ;.

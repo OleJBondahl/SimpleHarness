@@ -25,6 +25,7 @@ from simpleharness.core import (
     Task,
     TaskSpec,
     Workflow,
+    _build_local_session_prompt,
     _format_tool_call,
     _merge_config,
     _slugify,
@@ -2209,3 +2210,122 @@ def test_full_loop_lifecycle_with_retries():
     role, ls = resolve_loop_role(ls, lc)
     ls = apply_e2e_verdict(ls, lc, verdict="pass")
     assert ls.inner_phase == "done"
+
+
+# ── Shell loop transition tests ─────────────────────────────────────────
+
+
+def test_post_loop_session_review_pass(tmp_path: Path):
+    """After a reviewer session, reading a 'pass' verdict advances to critiquing."""
+    from simpleharness.shell import _apply_loop_transition
+
+    review_file = tmp_path / "REVIEW.md"
+    review_file.write_text("---\nverdict: pass\n---\nAll good.\n", encoding="utf-8")
+
+    lc = _loop_config()
+    ls = _loop_state(inner_phase="reviewing", total_steps=2, last_inner_role="local-reviewer")
+    new_ls = _apply_loop_transition(ls, lc, "local-reviewer", tmp_path)
+    assert new_ls.inner_phase == "critiquing"
+    assert not review_file.exists()  # cleaned up
+
+
+def test_post_loop_session_critique_approved(tmp_path: Path):
+    """After a critic session, reading an 'approved' verdict advances step."""
+    from simpleharness.shell import _apply_loop_transition
+
+    critique_file = tmp_path / "CRITIQUE.md"
+    critique_file.write_text("---\nverdict: approved\n---\nLooks good.\n", encoding="utf-8")
+
+    lc = _loop_config()
+    ls = _loop_state(
+        inner_phase="critiquing", current_step=0, total_steps=2, last_inner_role="local-critic"
+    )
+    new_ls = _apply_loop_transition(ls, lc, "local-critic", tmp_path)
+    assert new_ls.current_step == 1
+    assert new_ls.inner_phase == "building"
+    assert not critique_file.exists()
+
+
+def test_post_loop_session_no_review_defaults_fail(tmp_path: Path):
+    """Missing REVIEW.md defaults to 'fail' verdict."""
+    from simpleharness.shell import _apply_loop_transition
+
+    lc = _loop_config()
+    ls = _loop_state(inner_phase="reviewing", total_steps=2, last_inner_role="local-reviewer")
+    new_ls = _apply_loop_transition(ls, lc, "local-reviewer", tmp_path)
+    assert new_ls.inner_phase == "building"  # fail -> retry
+    assert new_ls.cycle == 1
+
+
+def test_count_plan_steps(tmp_path: Path):
+    """Counts '## Step' headings in PLAN.md."""
+    from simpleharness.shell import _count_plan_steps
+
+    plan_file = tmp_path / "PLAN.md"
+    plan_file.write_text(
+        "# Plan\n\n## Step 1\nDo X\n\n## Step 2\nDo Y\n\n## Step 3\nDo Z\n", encoding="utf-8"
+    )
+    t = _task()
+    assert _count_plan_steps(tmp_path, t) == 3
+
+
+def test_count_plan_steps_missing(tmp_path: Path):
+    """Returns 0 when no PLAN.md exists."""
+    from simpleharness.shell import _count_plan_steps
+
+    t = _task()
+    assert _count_plan_steps(tmp_path, t) == 0
+
+
+# ── Loop context in session prompts ──────────────────────────────────────────
+
+
+def test_local_session_prompt_includes_loop_step():
+    ls = LoopState(current_step=2, total_steps=5, inner_phase="building")
+    s = _state(loop_state=ls)
+    t = _task(state=s)
+    role = Role(name="local-builder", body="you are a builder")
+    wf = _workflow()
+    prompt = _build_local_session_prompt(t, role, wf, Path("/fake"), None, [])
+    assert "Step 3" in prompt
+    assert "of 5" in prompt
+
+
+def test_local_session_prompt_e2e_testing():
+    ls = LoopState(current_step=0, total_steps=3, inner_phase="e2e_testing")
+    s = _state(loop_state=ls)
+    t = _task(state=s)
+    role = Role(name="local-builder", body="you are a builder")
+    wf = _workflow()
+    prompt = _build_local_session_prompt(t, role, wf, Path("/fake"), None, [])
+    assert "e2e" in prompt.lower() or "E2E" in prompt
+
+
+def test_local_session_prompt_retry_info():
+    ls = LoopState(current_step=0, total_steps=3, inner_phase="building", cycle=2)
+    s = _state(loop_state=ls)
+    t = _task(state=s)
+    role = Role(name="local-builder", body="you are a builder")
+    wf = _workflow()
+    prompt = _build_local_session_prompt(t, role, wf, Path("/fake"), None, [])
+    assert "Retry 2" in prompt
+
+
+def test_local_session_prompt_critic_round_info():
+    ls = LoopState(current_step=0, total_steps=3, inner_phase="building", critic_rounds=1)
+    s = _state(loop_state=ls)
+    t = _task(state=s)
+    role = Role(name="local-builder", body="you are a builder")
+    wf = _workflow()
+    prompt = _build_local_session_prompt(t, role, wf, Path("/fake"), None, [])
+    assert "Critic round 1" in prompt
+
+
+def test_local_session_prompt_no_loop_state():
+    s = _state()
+    t = _task(state=s)
+    role = Role(name="local-builder", body="you are a builder")
+    wf = _workflow()
+    prompt = _build_local_session_prompt(t, role, wf, Path("/fake"), None, [])
+    assert "Step" not in prompt
+    assert "E2E" not in prompt

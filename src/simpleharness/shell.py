@@ -32,11 +32,16 @@ from simpleharness.benchmark import (
 )
 from simpleharness.core import (
     Config,
+    LoopConfig,
+    LoopState,
     State,
     Task,
     TaskSpec,
     Workflow,
+    _find_loop_config_for_role,
     _slugify,
+    apply_critique_verdict,
+    apply_review_verdict,
     build_rebrief_text,
     build_refinement_text,
     check_deliverables,
@@ -44,6 +49,7 @@ from simpleharness.core import (
     compute_post_session_state,
     format_task_dashboard,
     parse_task_spec,
+    parse_verdict,
     pause_file_path,
     plan_downstream_transitions,
     plan_tick,
@@ -228,6 +234,49 @@ def _extract_error_text(jsonl_path: Path) -> str:
     return "\n".join(errors)
 
 
+def _apply_loop_transition(
+    loop_state: LoopState,
+    loop_config: LoopConfig,
+    last_role: str,
+    worksite: Path,
+) -> LoopState:
+    """Read verdict files and advance loop state after a session."""
+    roles = loop_config.roles
+    reviewer_role = roles[1] if len(roles) > 1 else None
+    critic_role = roles[2] if len(roles) > 2 else None
+
+    if last_role == reviewer_role:
+        review_path = worksite / "REVIEW.md"
+        if review_path.exists():
+            verdict = parse_verdict(review_path.read_text(encoding="utf-8"))
+            review_path.unlink()
+        else:
+            verdict = "fail"
+        return apply_review_verdict(loop_state, loop_config, verdict=verdict)
+
+    if last_role == critic_role:
+        critique_path = worksite / "CRITIQUE.md"
+        if critique_path.exists():
+            verdict = parse_verdict(critique_path.read_text(encoding="utf-8"))
+            critique_path.unlink()
+        else:
+            verdict = "approved"
+        return apply_critique_verdict(loop_state, loop_config, verdict=verdict)
+
+    return loop_state
+
+
+def _count_plan_steps(worksite: Path, task: Task) -> int:
+    """Count the number of steps in PLAN.md by counting '## Step' headings."""
+    plan_path = worksite / "PLAN.md"
+    if not plan_path.exists():
+        plan_path = task.folder / "PLAN.md"
+    if not plan_path.exists():
+        return 0
+    text = plan_path.read_text(encoding="utf-8")
+    return sum(1 for line in text.splitlines() if line.startswith("## Step"))
+
+
 def tick_once(worksite: Path, config: Config) -> bool:
     """One iteration of the loop. Returns True if we ran a session, False if idle."""
     tasks = tuple(discover_tasks(worksite))
@@ -305,6 +354,13 @@ def tick_once(worksite: Path, config: Config) -> bool:
             # than under the old code. The default threshold is a warning, not a
             # block, so this only surfaces as a soft nag.
             pre_hash = state_hash(task.state_path)
+
+            # Initialize loop_state on first loop entry
+            if plan.init_loop_state is not None:
+                total_steps = _count_plan_steps(worksite, task)
+                init_ls = replace(plan.init_loop_state, total_steps=total_steps)
+                init_state = replace(task.state, loop_state=init_ls)
+                write_state(task.state_path, init_state)
 
             # clear any stale next_role override (consumed by this session)
             if task.state.next_role:
@@ -384,6 +440,22 @@ def tick_once(worksite: Path, config: Config) -> bool:
                     )
 
             write_state(task.state_path, new_state)
+
+            # ── Loop state transitions ──────────────────────────────────
+            if new_state.loop_state is not None:
+                lc = _find_loop_config_for_role(workflow.phases, role.name)
+                if lc is not None:
+                    updated_ls = _apply_loop_transition(
+                        new_state.loop_state,
+                        lc,
+                        role.name,
+                        worksite,
+                    )
+                    new_state = replace(new_state, loop_state=updated_ls)
+                    if updated_ls.inner_phase == "done":
+                        new_state = replace(new_state, loop_state=None)
+                    write_state(task.state_path, new_state)
+
             say(
                 f"task {task.slug}: session complete  "
                 f"(status={new_state.status}, next_role={new_state.next_role or 'auto'})"
