@@ -52,7 +52,11 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-extend-select = ["I", "B", "UP", "SIM", "RUF"]
+extend-select = ["I", "B", "UP", "SIM", "RUF", "D"]
+extend-ignore = ["D100", "D104", "D105", "D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [dependency-groups]
 dev = [
@@ -60,13 +64,58 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.9",
     "ty>=0.0.29",
+    "hypothesis>=6.151.0",
+    "polyfactory>=2.22.0",
+    "mutmut>=3.4.0",
+    "import-linter>=2.5",
+    "vulture>=2.14",
+    "complexipy>=3.3.0",
 ]
 security = [
     "detect-secrets>=1.5.0",
     "pip-audit>=2.7.0",
     "pip-licenses>=5.0.0",
+    "bandit>=1.8.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --cov=src/simpleharness --cov-branch --cov-fail-under=42"
+
+[tool.coverage.run]
+branch = true
+source = ["src/simpleharness"]
+
+[tool.coverage.report]
+fail_under = 42
+show_missing = true
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
+
+[tool.importlinter]
+root_packages = ["simpleharness"]
+
+[[tool.importlinter.contracts]]
+name = "Core must not import shell"
+type = "forbidden"
+source_modules = ["simpleharness.core", "simpleharness.approver_core"]
+forbidden_modules = ["simpleharness.shell", "simpleharness.approver_shell"]
+
+[[tool.importlinter.contracts]]
+name = "Shell layers are independent"
+type = "independence"
+modules = [
+    "simpleharness.shell",
+    "simpleharness.approver_shell",
+]
+
+[tool.mutmut]
+paths_to_mutate = ["src/"]
+tests_dir = "tests/"
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src"]
+
+[tool.complexipy]
+paths = ["src"]
+max_complexity_allowed = 15
