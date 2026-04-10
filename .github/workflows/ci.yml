@@ -59,8 +59,8 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Mutation testing (core modules)
-        run: uv run python -m mutmut run --paths-to-mutate src/simpleharness/core.py --tests-dir tests/ --no-progress
+      - name: Mutation testing
+        run: uv run python -m mutmut run
 
       - name: Mutation results
         if: always()
